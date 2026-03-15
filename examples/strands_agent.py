@@ -2,14 +2,10 @@
 ARISE + Strands Agents — Self-Evolving Tool Demo
 
 Demonstrates ARISE evolving an agent's tool library at runtime. The agent
-starts with only 3 basic tools (write_file, read_file, list_dir) and gets
-tasks that are impossible with those tools alone: SHA-256 hashing, ZIP
-archiving, CSV sorting/filtering, and log file aggregation.
-
-When the agent fails repeatedly, ARISE detects the gap, synthesizes a new
-tool (e.g. compute_sha256, create_zip_archive, sort_csv), tests it in a
-sandbox, and promotes it to the active library. The agent then uses the
-new tool on subsequent tasks.
+starts with only 3 basic tools (write_file, read_file, list_dir) defined as
+native Strands @tool functions. When the agent fails repeatedly, ARISE detects
+the gap, synthesizes a new tool, tests it in a sandbox, and promotes it to the
+active library.
 
 Requirements:
     pip install strands-agents boto3
@@ -24,18 +20,19 @@ import json
 import os
 import shutil
 import sys
-import inspect
 import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from arise import ARISE, Sandbox, SkillLibrary
-from arise.adapters import strands_adapter
+from strands import Agent, tool
+from strands.models import BedrockModel
+
+from arise import ARISE, Sandbox
 from arise.config import ARISEConfig
 from arise.rewards.builtin import llm_judge_reward
 from arise.rewards.composite import CompositeReward
-from arise.types import Skill, SkillOrigin, SkillStatus, Trajectory
+from arise.types import SkillOrigin, Trajectory
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +43,12 @@ WORK_DIR = os.path.join(tempfile.gettempdir(), "arise_strands_test")
 
 
 # ---------------------------------------------------------------------------
-# Seed tools — self-contained (import inside function body so they work
-# when loaded from the skill library via exec)
+# Seed tools — native Strands @tool functions
 # ---------------------------------------------------------------------------
 
+@tool
 def write_file(path: str, content: str) -> str:
     """Write text content to a file. Creates parent directories if needed. Use this for plain text, JSON, YAML, CSV, HTML, Markdown, Dockerfiles, .env files, and other text-based formats."""
-    import os
     if not os.path.isabs(path):
         path = os.path.join(os.environ.get("ARISE_WORK_DIR", "."), path)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -61,9 +57,9 @@ def write_file(path: str, content: str) -> str:
     return f"Written {len(content)} bytes to {path}"
 
 
+@tool
 def read_file(path: str) -> str:
     """Read a file and return its text contents (max 5000 chars). Use this to inspect existing files before transforming them."""
-    import os
     if not os.path.isabs(path):
         path = os.path.join(os.environ.get("ARISE_WORK_DIR", "."), path)
     try:
@@ -73,9 +69,9 @@ def read_file(path: str) -> str:
         return f"Error: file not found: {path}"
 
 
+@tool
 def list_dir(path: str = ".") -> str:
     """List files in a directory. Returns one filename per line."""
-    import os
     if not os.path.isabs(path):
         path = os.path.join(os.environ.get("ARISE_WORK_DIR", "."), path)
     try:
@@ -277,7 +273,7 @@ def setup_fixtures():
 # ---------------------------------------------------------------------------
 
 def main():
-    for d in ["./arise_skills_strands", "./arise_trajectories_strands"]:
+    for d in ["./arise_skills", "./arise_trajectories"]:
         if os.path.exists(d):
             shutil.rmtree(d)
     if os.path.exists(WORK_DIR):
@@ -286,31 +282,12 @@ def main():
     os.environ["ARISE_WORK_DIR"] = WORK_DIR
     setup_fixtures()
 
-    # --- Skill library with seed tools ---
-    library = SkillLibrary("./arise_skills_strands")
-
-    for fn, desc in [
-        (write_file, "Write text content to a file. Creates parent directories if needed."),
-        (read_file, "Read a file and return its text contents (max 5000 chars)."),
-        (list_dir, "List files in a directory. Returns one filename per line."),
-    ]:
-        skill = Skill(
-            name=fn.__name__,
-            description=desc,
-            implementation=inspect.getsource(fn),
-            origin=SkillOrigin.MANUAL,
-            status=SkillStatus.ACTIVE,
-        )
-        library.add(skill)
-        library.promote(skill.id)
-
-    # --- Strands agent backed by Claude via Bedrock ---
-    from strands.models import BedrockModel
-
-    agent_fn = strands_adapter(
+    # --- Strands agent with native @tool functions ---
+    strands_agent = Agent(
         model=BedrockModel(
             model_id="anthropic.claude-3-haiku-20240307-v1:0",
         ),
+        tools=[write_file, read_file, list_dir],
         system_prompt=(
             "You are a file generation agent. You create, read, and transform files "
             "using the tools provided to you.\n\n"
@@ -321,19 +298,17 @@ def main():
             "- After completing the task, summarize what you did.\n"
             "- For format conversions, read the source file first, then write the result."
         ),
+        callback_handler=None,
     )
 
-    # --- ARISE wraps the Strands agent ---
-    agent = ARISE(
-        agent_fn=agent_fn,
+    # --- ARISE wraps the Strands agent directly ---
+    arise = ARISE(
+        agent=strands_agent,       # Pass the Strands Agent directly!
         reward_fn=reward_fn,
-        model="gpt-4o-mini",  # cheap model for tool synthesis (not the agent's model)
+        model="gpt-4o-mini",       # cheap model for tool synthesis (not the agent's model)
         sandbox=Sandbox(backend="subprocess"),
-        skill_library=library,
         config=ARISEConfig(
             model="gpt-4o-mini",
-            skill_store_path="./arise_skills_strands",
-            trajectory_store_path="./arise_trajectories_strands",
             failure_threshold=2,
             max_evolutions_per_hour=10,
             verbose=True,
@@ -378,7 +353,7 @@ def main():
     print()
     print("Agent: Strands + Claude Haiku (Bedrock)")
     print("Tool synthesis: GPT-4o-mini")
-    print("Seed tools: write_file, read_file, list_dir")
+    print("Seed tools: write_file, read_file, list_dir (native @tool)")
     print("Reward: 40% structural + 40% LLM judge + 20% tool usage")
     print()
     print("Tasks escalate from simple file I/O to SHA-256 hashing, ZIP archiving,")
@@ -393,7 +368,7 @@ def main():
         print(f"Task {i + 1}/{len(tasks)}")
         print(f"  {task[:90]}{'...' if len(task) > 90 else ''}")
         print("-" * 70)
-        result = agent.run(task)
+        result = arise.run(task)
         result_str = str(result)
         if len(result_str) > 500:
             print(f"Result:\n{result_str[:500]}\n... ({len(result_str)} chars total)")
@@ -404,19 +379,19 @@ def main():
     print(f"\n{'=' * 70}")
     print("FINAL REPORT")
     print("=" * 70)
-    stats = agent.stats
+    stats = arise.stats
     print(f"Episodes:             {stats['episodes_run']}")
     print(f"Active skills:        {stats['active']}")
     print(f"Total skills created: {stats['total_skills']}")
     print(f"Success rate:         {stats['recent_success_rate']:.0%}")
 
     print("\nActive Skills:")
-    for skill in agent.skills:
+    for skill in arise.skills:
         origin = skill.origin.value
         rate = f"{skill.success_rate:.0%}" if skill.invocation_count > 0 else "n/a"
         print(f"  [{origin:>11}] {skill.name:<35} success={rate}")
 
-    synthesized = [s for s in agent.skills if s.origin in (SkillOrigin.SYNTHESIZED, SkillOrigin.REFINED)]
+    synthesized = [s for s in arise.skills if s.origin in (SkillOrigin.SYNTHESIZED, SkillOrigin.REFINED)]
     if synthesized:
         print(f"\nTools the agent created itself:")
         for s in synthesized:

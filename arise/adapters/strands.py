@@ -109,13 +109,23 @@ def _toolspec_to_strands_tool(tool_spec: ToolSpec) -> Callable:
 
 
 def strands_adapter(
-    *,
     agent: Any | None = None,
+    *,
     model: Any | None = None,
     system_prompt: str | None = None,
     **agent_kwargs: Any,
 ) -> Callable[[str, list[ToolSpec]], str]:
     """Create an ARISE-compatible agent_fn backed by a Strands Agent.
+
+    Can be called in two ways:
+
+    1. With an existing Agent (preferred)::
+
+        agent_fn = strands_adapter(my_agent)
+
+    2. With model/system_prompt to create agents on the fly::
+
+        agent_fn = strands_adapter(model=BedrockModel(...), system_prompt="...")
 
     Args:
         agent: An existing ``strands.Agent`` instance. If provided, ``model``
@@ -159,6 +169,7 @@ def strands_adapter(
                 model=agent.model,
                 tools=all_tools,
                 system_prompt=getattr(agent, "system_prompt", None),
+                callback_handler=None,
             )
         else:
             # Create a fresh agent with the provided model config
@@ -167,6 +178,7 @@ def strands_adapter(
             kwargs["tools"] = strands_tools
             if system_prompt is not None:
                 kwargs["system_prompt"] = system_prompt
+            kwargs.setdefault("callback_handler", None)
             agent_instance = Agent(**kwargs)
 
         result = agent_instance(task)

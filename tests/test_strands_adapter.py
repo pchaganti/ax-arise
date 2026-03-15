@@ -231,6 +231,45 @@ class TestStrandsAdapterWithAgent:
         assert ctor_kwargs["model"] is mock_existing_agent.model
         assert ctor_kwargs["system_prompt"] == "Original prompt"
 
+    def test_positional_agent_argument(self, mock_strands):
+        """strands_adapter(agent) should work as a positional argument."""
+        from arise.adapters.strands import strands_adapter
+
+        mock_existing_agent = MagicMock()
+        mock_existing_agent.model = MagicMock()
+        mock_existing_agent.tools = []
+        mock_existing_agent.system_prompt = "Test prompt"
+
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.return_value = "positional works"
+        mock_strands.return_value = mock_agent_instance
+
+        # Pass agent as positional (not keyword)
+        agent_fn = strands_adapter(mock_existing_agent)
+        result = agent_fn("task", [])
+
+        assert result == "positional works"
+        mock_agent_instance.assert_called_once_with("task")
+
+    def test_callback_handler_none_when_agent_provided(self, mock_strands):
+        """When wrapping an existing agent, callback_handler should be None."""
+        from arise.adapters.strands import strands_adapter
+
+        mock_existing_agent = MagicMock()
+        mock_existing_agent.model = MagicMock()
+        mock_existing_agent.tools = []
+        mock_existing_agent.system_prompt = None
+
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.return_value = "ok"
+        mock_strands.return_value = mock_agent_instance
+
+        agent_fn = strands_adapter(mock_existing_agent)
+        agent_fn("task", [])
+
+        ctor_kwargs = mock_strands.call_args.kwargs
+        assert ctor_kwargs["callback_handler"] is None
+
     def test_works_with_no_existing_tools(self, mock_strands):
         from arise.adapters.strands import strands_adapter
 
@@ -312,3 +351,61 @@ class TestMultipleTools:
         ctor_kwargs = mock_strands.call_args.kwargs
         assert len(ctor_kwargs["tools"]) == 3
         assert result == "result"
+
+
+# ---------------------------------------------------------------------------
+# Tests: ARISE constructor with agent= parameter
+# ---------------------------------------------------------------------------
+
+class TestARISEAgentParam:
+    def test_arise_accepts_strands_agent(self, mock_strands):
+        """ARISE(agent=strands_agent) should auto-wrap via strands_adapter."""
+        from arise.agent import ARISE
+
+        mock_existing_agent = MagicMock()
+        # Strands Agent has tool_registry attribute
+        mock_existing_agent.tool_registry = MagicMock()
+        mock_existing_agent.model = MagicMock()
+        mock_existing_agent.tools = []
+        mock_existing_agent.system_prompt = "test"
+
+        arise = ARISE(
+            agent=mock_existing_agent,
+            reward_fn=lambda t: 1.0,
+        )
+
+        assert arise.agent_fn is not None
+        assert callable(arise.agent_fn)
+
+    def test_arise_rejects_both_agent_and_agent_fn(self, mock_strands):
+        """Providing both agent= and agent_fn= should raise ValueError."""
+        from arise.agent import ARISE
+
+        mock_existing_agent = MagicMock()
+        mock_existing_agent.tool_registry = MagicMock()
+
+        with pytest.raises(ValueError, match="not both"):
+            ARISE(
+                agent=mock_existing_agent,
+                agent_fn=lambda task, tools: "nope",
+                reward_fn=lambda t: 1.0,
+            )
+
+    def test_arise_rejects_neither_agent_nor_agent_fn(self, mock_strands):
+        """Providing neither agent= nor agent_fn= should raise ValueError."""
+        from arise.agent import ARISE
+
+        with pytest.raises(ValueError, match="must be provided"):
+            ARISE(reward_fn=lambda t: 1.0)
+
+    def test_arise_rejects_unknown_agent_type(self, mock_strands):
+        """Passing an object without tool_registry should raise TypeError."""
+        from arise.agent import ARISE
+
+        unknown_agent = MagicMock(spec=[])  # no attributes
+
+        with pytest.raises(TypeError, match="Unsupported agent type"):
+            ARISE(
+                agent=unknown_agent,
+                reward_fn=lambda t: 1.0,
+            )
