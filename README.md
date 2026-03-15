@@ -225,6 +225,7 @@ Tool synthesis uses a cheap model (gpt-4o-mini by default). Each evolution cycle
 | [`devops_agent.py`](./examples/devops_agent.py) | DevOps agent evolves log analysis, metrics parsing tools |
 | [`data_analysis_agent.py`](./examples/data_analysis_agent.py) | Data agent evolves anomaly detection, correlation tools |
 | [`coding_agent.py`](./examples/coding_agent.py) | Coding agent evolves file search, code manipulation tools |
+| [`file_gen_agent.py`](./examples/file_gen_agent.py) | File generation with non-binary rewards (LLM judge + structural validation) |
 | [`retrieval_agent.py`](./examples/retrieval_agent.py) | Text agent evolves extraction, summarization tools |
 
 ## Dependencies
