@@ -14,7 +14,7 @@ class TrajectoryStore:
         self.path = path
         os.makedirs(path, exist_ok=True)
         self._db_path = os.path.join(path, "trajectories.db")
-        self._conn = sqlite3.connect(self._db_path)
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_db()

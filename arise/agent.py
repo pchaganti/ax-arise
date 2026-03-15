@@ -45,6 +45,7 @@ class ARISE:
 
         self._episode_count = 0
         self._evolution_timestamps: list[float] = []
+        self._last_evolution_episode = 0
 
     def run(self, task: str, **kwargs: Any) -> str:
         self._episode_count += 1
@@ -96,8 +97,11 @@ class ARISE:
         # Prune old trajectories
         self._maybe_prune_trajectories()
 
-        # Check if evolution should trigger
-        recent = self.trajectory_store.get_recent(self.config.plateau_window)
+        # Check if evolution should trigger — only count episodes since last evolution
+        episodes_since_evolution = self._episode_count - self._last_evolution_episode
+        recent = self.trajectory_store.get_recent(max(episodes_since_evolution, self.config.plateau_window))
+        # Filter to only trajectories since last evolution
+        recent = recent[:episodes_since_evolution] if episodes_since_evolution > 0 else recent
         if self.trigger.should_evolve(recent, self.skill_library):
             if not self._can_evolve():
                 if self.config.verbose:
@@ -124,6 +128,7 @@ class ARISE:
 
     def evolve(self):
         self._evolution_timestamps.append(time.time())
+        self._last_evolution_episode = self._episode_count
 
         failures = self.trajectory_store.get_failures(n=self.config.failure_threshold * 2)
         if not failures:
@@ -134,6 +139,14 @@ class ARISE:
         gaps = self.forge.detect_gaps(failures, self.skill_library)
         if self.config.verbose:
             print(f"[ARISE] Found {len(gaps)} capability gaps.")
+
+        # Skip gaps where a skill with that name already exists
+        active_names = {s.name for s in self.skill_library.get_active_skills()}
+        gaps = [g for g in gaps if g.suggested_name not in active_names]
+        if not gaps:
+            if self.config.verbose:
+                print("[ARISE] All detected gaps already have active skills.")
+            return
 
         for gap in gaps:
             if self.config.verbose:
