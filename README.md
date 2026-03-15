@@ -1,17 +1,63 @@
-# ARISE — Self-Evolving Agent Framework
+# ARISE — Adaptive Runtime Improvement through Self-Evolution
 
-**Framework-agnostic middleware that makes any LLM agent self-improving.** Wrap your existing agent, define what "good" looks like, and ARISE handles the rest — autonomously creating, testing, versioning, and promoting new tools.
+**Your agent works great on the tasks you planned for. ARISE handles the ones you didn't.**
 
-Works with **any agent framework**: Strands, LangGraph, CrewAI, raw OpenAI function calling, or your custom setup. ARISE doesn't replace your agent — it wraps it and gives it the ability to create its own tools.
+ARISE is a framework-agnostic middleware that sits between your LLM agent and its tool library. When your agent encounters tasks it can't solve with its current tools, ARISE detects the gap, synthesizes a new tool, tests it in a sandbox, and promotes it to the active library — no human intervention required.
+
+It works with any agent framework: [Strands](https://github.com/strands-agents/sdk-python), LangGraph, CrewAI, raw OpenAI/Anthropic function calling, or your own setup. ARISE doesn't replace your agent — it gives it the ability to extend itself.
+
+## The Problem
+
+Building an agent is easy. Maintaining its tool library is the bottleneck.
+
+Every time your agent fails at something new, a human engineer has to:
+1. Notice the failure (maybe days later, maybe never)
+2. Understand what tool is missing
+3. Write it, test it, deploy it
+
+This works when you control the environment. It breaks when:
+- **Your agent serves many customers** with different internal systems, APIs, and data formats
+- **Your agent runs autonomously** and encounters situations you didn't anticipate at build time
+- **The long tail of edge cases** isn't worth an engineer's time individually, but collectively costs you
+
+ARISE automates the tool engineering feedback loop for these cases.
 
 ## How It Works
 
-1. Your agent runs tasks using its current tools
-2. ARISE logs every trajectory and computes a reward signal
-3. When failures accumulate, ARISE analyzes what tools are missing
-4. It synthesizes new tools, tests them in a sandbox, validates with adversarial tests
-5. Passing tools are promoted to the active library
-6. Your agent now has new capabilities — automatically
+```
+┌─────────────────────────────────────────────────┐
+│  Your Agent (Strands, LangGraph, CrewAI, etc.)  │
+│  ┌───────────────────────────────────────────┐   │
+│  │  Task → Tools → Result                   │   │
+│  └───────────────────────────────────────────┘   │
+└──────────────────────┬──────────────────────────┘
+                       │
+              ┌────────▼────────┐
+              │   ARISE Layer   │
+              │                 │
+              │  1. Log trajectory (task, tools used, outcome)
+              │  2. Compute reward signal
+              │  3. If failures accumulate:
+              │     a. Analyze gaps ("what tool is missing?")
+              │     b. Synthesize candidate tool (LLM)
+              │     c. Generate tests (LLM)
+              │     d. Run in sandbox
+              │     e. Adversarial validation (LLM)
+              │     f. Promote or reject
+              │  4. Agent now has new tools
+              └─────────────────┘
+```
+
+## When to Use ARISE
+
+**Use it when** your agent operates in environments you can't fully predict at build time:
+
+- **Multi-tenant platforms** — one agent, many customers with different stacks. The agent learns each customer's API patterns and data formats.
+- **Long-running autonomous agents** — ops agents, monitoring agents, data pipeline agents that encounter new situations at 3am without a human to write a quick fix.
+- **Exploration agents** — agents navigating unfamiliar codebases, APIs, or datasets where the needed tools depend on what they discover.
+- **Reducing tool engineering backlog** — your agent fails on 15 different edge cases. Each isn't worth an engineer's afternoon. ARISE handles the long tail.
+
+**Don't use it when** your agent has a well-defined job with hand-crafted tools that already work. A human writing tools is faster and more reliable for known problems.
 
 ## Quick Start
 
@@ -20,98 +66,133 @@ pip install arise-ai
 ```
 
 ```python
-from arise import ARISE, Sandbox, SkillLibrary, ToolSpec
+from arise import ARISE, ToolSpec
 from arise.rewards import task_success
 
-# Your agent — takes a task and a list of ToolSpecs, returns a result.
-# ToolSpec has: name, description, parameters (JSON Schema), fn (callable)
+# Your agent — any function that takes a task and tools, returns a result.
+# ToolSpec gives your agent the name, description, parameter schema, and callable.
 def my_agent(task: str, tools: list[ToolSpec]) -> str:
-    # Use tools[i].name, tools[i].description to decide which to call
-    # Call tools[i].fn(...) or tools[i](...) to invoke
-    # ... your existing agent logic ...
-    pass
+    # tools[i].name, tools[i].description — for building prompts
+    # tools[i].parameters — JSON Schema for function-calling
+    # tools[i].fn(...) or tools[i](...) — invoke the tool
+    ...
 
 agent = ARISE(
     agent_fn=my_agent,
     reward_fn=task_success,
-    sandbox=Sandbox(backend="subprocess"),
-    skill_library=SkillLibrary("./skills"),
-    model="gpt-4o-mini",  # model for skill synthesis
+    model="gpt-4o-mini",  # cheap model for tool synthesis (not your agent's model)
 )
 
-# Run tasks — agent improves over time
-result = agent.run("Parse this CSV and detect anomalies")
-
-# Check what tools the agent created
-for skill in agent.skills:
-    print(f"{skill.name} v{skill.version} — {skill.success_rate:.0%} success")
+result = agent.run("Fetch all users from the paginated API and count by department")
 ```
 
-## What You'll See
+## What Happens in Practice
+
+An API integration agent starts with just `http_get` and `http_post`. It hits tasks requiring auth, pagination, and JSON parsing:
 
 ```
 [ARISE] Episode 1 | FAIL | reward=0.00 | skills=2
+  Task: "Fetch all paginated users with auth"
+  Agent has: [http_get, http_post]
+
 [ARISE] Episode 2 | FAIL | reward=0.00 | skills=2
 [ARISE] Episode 3 | FAIL | reward=0.00 | skills=2
-[ARISE] Episode 4 | FAIL | reward=0.00 | skills=2
-[ARISE] Episode 5 | FAIL | reward=0.00 | skills=2
-[ARISE] Evolution triggered — analyzing gaps...
-[ARISE] Found 1 capability gaps.
-[ARISE] Synthesizing tool: compute_statistics...
-[ARISE] Testing in sandbox... 5/5 passed
-[ARISE] Adversarial validation... 3/3 passed
-[ARISE] Skill 'compute_statistics' created and promoted!
-[ARISE] Episode 6 | OK | reward=1.00 | skills=3
+
+[ARISE] Evolution triggered — 3 failures on API tasks
+[ARISE:forge] Detecting capability gaps...
+[ARISE:forge] Synthesizing 'parse_json_response'...
+[ARISE:forge] Testing in sandbox (attempt 1/3)... 3/3 passed
+[ARISE:forge] Adversarial testing... passed
+[ARISE] Skill 'parse_json_response' created and promoted!
+
+[ARISE:forge] Synthesizing 'fetch_all_paginated'...
+[ARISE:forge] Testing in sandbox (attempt 1/3)... failed
+[ARISE:forge] Refining...
+[ARISE:forge] Testing in sandbox (attempt 2/3)... 1/1 passed
+[ARISE:forge] Adversarial testing... passed
+[ARISE] Skill 'fetch_all_paginated' created and promoted!
+
+[ARISE] Episode 4 | OK | reward=1.00 | skills=4
+  Task: "Fetch analytics summary with auth"
+  Agent has: [http_get, http_post, parse_json_response, fetch_all_paginated]
 ```
 
-## The ToolSpec Interface
+After 8 episodes, the agent autonomously created: `parse_json_response`, `fetch_all_paginated`, `count_users_by_attribute`, `calculate_total_inventory_value`, `validate_json_response`.
 
-ARISE passes your agent `ToolSpec` objects, not raw callables. This gives your agent the schema info it needs to discover and use tools:
+(See [`examples/api_agent.py`](./examples/api_agent.py) — runs a local mock API server, no external dependencies needed.)
 
-```python
-@dataclass
-class ToolSpec:
-    name: str              # "detect_anomalies"
-    description: str       # "Detect anomalies using z-score method"
-    parameters: dict       # JSON Schema for the function parameters
-    fn: Callable           # The actual callable
-    skill_id: str | None   # Internal tracking ID
-
-    def __call__(self, *args, **kwargs):
-        return self.fn(*args, **kwargs)
-```
-
-Your `agent_fn` receives `list[ToolSpec]` and can use `tool.name`, `tool.description`, and `tool.parameters` to build its system prompt or function-calling schema.
-
-## Built-in Rewards
+## Strands Integration
 
 ```python
-from arise.rewards import (
-    task_success,          # 1.0 if succeeded, 0.0 otherwise
-    code_execution_reward, # Penalizes errors in tool calls
-    answer_match_reward,   # Compares output to expected answer
-    efficiency_reward,     # Bonus for fewer steps
-    llm_judge_reward,      # LLM rates trajectory quality
-    CompositeReward,       # Combine multiple rewards with weights
+from arise import ARISE
+from arise.adapters import strands_adapter
+from arise.rewards import task_success
+from strands.models import BedrockModel
+
+# Wrap your Strands agent — ARISE injects evolving tools alongside your existing ones
+agent_fn = strands_adapter(
+    model=BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514"),
+    system_prompt="You are a DevOps assistant.",
 )
 
-# Combine rewards
-reward = CompositeReward([
-    (task_success, 1.0),
-    (efficiency_reward, 0.3),
-])
+arise = ARISE(
+    agent_fn=agent_fn,
+    reward_fn=task_success,
+    model="gpt-4o-mini",  # cheap model for synthesis, your agent uses Claude
+)
 ```
+
+ARISE uses a cheap model (gpt-4o-mini) for tool synthesis. Your agent's model is independent — use Claude, GPT-4, Gemini, whatever you want.
+
+## Architecture
+
+```
+arise/
+├── agent.py              # ARISE wrapper — the main class
+├── types.py              # Skill, ToolSpec, Trajectory, GapAnalysis
+├── config.py             # ARISEConfig
+├── llm.py                # LLM abstraction (litellm or raw HTTP)
+├── skills/
+│   ├── library.py        # SQLite-backed versioned skill store
+│   ├── forge.py          # Skill synthesis, refinement, adversarial testing
+│   ├── sandbox.py        # Isolated execution (subprocess or Docker)
+│   └── triggers.py       # When to enter evolution mode
+├── trajectory/
+│   ├── store.py          # Persistent trajectory logging (SQLite)
+│   └── logger.py         # Per-episode trajectory recorder
+├── rewards/
+│   ├── builtin.py        # task_success, efficiency_reward, llm_judge, etc.
+│   └── composite.py      # Combine multiple reward signals
+├── prompts/              # All LLM prompts (gap detection, synthesis, etc.)
+├── adapters/
+│   └── strands.py        # Strands Agents SDK adapter
+└── cli.py                # CLI: arise status, skills, inspect, rollback
+```
+
+## Safety Model
+
+Generated code is not trusted by default. ARISE applies multiple validation layers before a tool enters your agent's active library:
+
+1. **Sandbox execution** — tools run in isolated subprocesses (or Docker containers) with timeouts and resource limits
+2. **Test suite generation** — the LLM writes tests alongside the tool
+3. **Adversarial validation** — a separate LLM call tries to break the tool with edge cases, empty inputs, and type boundary tests
+4. **Promotion gate** — only tools that pass all tests get promoted to `ACTIVE`; failures stay in `TESTING`
+5. **Version control** — every mutation is versioned in SQLite; rollback anytime with `arise rollback <version>`
+6. **Rate limiting** — `max_evolutions_per_hour` prevents runaway LLM costs
+7. **Skills are just Python** — export and review any tool with `arise inspect <id>` or `arise export`
+
+For production, use the Docker sandbox backend and review promoted skills before deploying.
 
 ## CLI
 
 ```bash
-arise status ./skills          # Library statistics
-arise skills ./skills          # List active skills with performance
-arise inspect ./skills <id>    # View skill implementation + tests
-arise rollback ./skills <ver>  # Rollback to a previous version
+arise status ./skills          # Library stats: active, testing, deprecated, success rates
+arise skills ./skills          # List active skills with performance metrics
+arise inspect ./skills <id>    # View full implementation + test suite
+arise rollback ./skills <ver>  # Rollback library to a previous version
 arise export ./skills ./out    # Export skills as standalone .py files
-arise history ./trajectories   # Show recent trajectory outcomes
-arise evolve --dry-run         # Preview what evolution would do
+arise history ./trajectories   # Recent trajectory outcomes
+arise evolve --dry-run         # Preview what evolution would do (no LLM calls)
 ```
 
 ## Configuration
@@ -120,65 +201,67 @@ arise evolve --dry-run         # Preview what evolution would do
 from arise import ARISEConfig
 
 config = ARISEConfig(
-    model="gpt-4o-mini",           # LLM for skill synthesis
-    sandbox_backend="subprocess",   # or "docker" for isolation
-    sandbox_timeout=30,             # seconds
-    max_library_size=50,            # max active skills
-    max_refinement_attempts=3,      # retries for failing tools
+    model="gpt-4o-mini",           # LLM for tool synthesis (not your agent's model)
+    sandbox_backend="subprocess",   # or "docker" for stronger isolation
+    sandbox_timeout=30,             # seconds per sandbox run
+    max_library_size=50,            # cap on active tools
+    max_refinement_attempts=3,      # retries when generated code fails tests
 
-    # Evolution triggers
-    failure_threshold=5,            # failures before evolving
-    plateau_window=10,              # episodes to detect plateau
+    failure_threshold=5,            # failures before triggering evolution
     max_evolutions_per_hour=3,      # cost control
-
-    # Storage
-    max_trajectories=1000,          # auto-prune old trajectories
+    max_trajectories=1000,          # auto-prune trajectory history
 )
 ```
 
-## Safety
-
-- **Sandboxed execution**: Generated tools run in isolated subprocesses (or Docker containers) with timeouts
-- **Adversarial testing**: After initial tests pass, a separate LLM call generates edge-case tests to catch bugs
-- **Version control**: Every skill mutation is versioned. Rollback anytime with `arise rollback`
-- **Rate limiting**: `max_evolutions_per_hour` prevents cost spirals
-- **Skills are just Python**: Export and inspect any skill as a `.py` file
-
 ## API Costs
 
-Each evolution cycle makes 3-5 LLM calls (gap detection, synthesis, test generation, possible refinement). With `gpt-4o-mini` and default settings (`max_evolutions_per_hour=3`), expect roughly **$0.01-0.05 per evolution cycle**. The quickstart example costs under $0.50 total.
+Tool synthesis uses a cheap model (gpt-4o-mini by default). Each evolution cycle is 3-5 LLM calls:
+- Gap detection (~500 tokens)
+- Tool synthesis (~1000 tokens)
+- Adversarial test generation (~500 tokens)
+- Possible refinement (~800 tokens)
 
-Set `verbose=True` (default) to see when evolutions happen. Use `arise evolve --dry-run` to preview triggers without calling the LLM.
-
-## Security Note
-
-ARISE uses `exec()` to load generated skill implementations. Skills are tested in a sandbox before promotion, but once promoted, they execute in the same process as your agent. For production use:
-
-- Review promoted skills with `arise inspect`
-- Use the Docker sandbox backend for stronger isolation
-- Set `allowed_imports` in config to restrict what generated code can import
+**Estimated cost: $0.01-0.05 per evolution cycle.** With `max_evolutions_per_hour=3`, worst case is ~$0.15/hour. The quickstart example runs for under $0.50 total.
 
 ## Examples
 
-See [`examples/`](./examples/) for working demos:
-
-- **quickstart.py** — Math agent that learns statistics tools
-- **data_analysis_agent.py** — Agent that learns anomaly detection, correlation
-- **coding_agent.py** — Agent that learns file search, code manipulation
-- **retrieval_agent.py** — Agent that learns text extraction, summarization
+| Example | What it shows |
+|---------|--------------|
+| [`quickstart.py`](./examples/quickstart.py) | Math agent evolves statistics tools |
+| [`api_agent.py`](./examples/api_agent.py) | HTTP agent evolves auth, pagination, JSON parsing tools (local mock server) |
+| [`devops_agent.py`](./examples/devops_agent.py) | DevOps agent evolves log analysis, metrics parsing tools |
+| [`data_analysis_agent.py`](./examples/data_analysis_agent.py) | Data agent evolves anomaly detection, correlation tools |
+| [`coding_agent.py`](./examples/coding_agent.py) | Coding agent evolves file search, code manipulation tools |
+| [`retrieval_agent.py`](./examples/retrieval_agent.py) | Text agent evolves extraction, summarization tools |
 
 ## Dependencies
 
 Core framework has **one dependency** (`pydantic`). Everything else is optional:
 
 ```
-arise-ai              # just pydantic
-arise-ai[litellm]     # + litellm for multi-provider LLM support
-arise-ai[docker]      # + docker for container sandbox
-arise-ai[all]         # everything
+pip install arise-ai                # just pydantic
+pip install arise-ai[litellm]       # + litellm for multi-provider LLM support
+pip install arise-ai[docker]        # + docker for container sandbox
+pip install arise-ai[all]           # everything
 ```
 
 Without litellm, ARISE uses raw HTTP requests to any OpenAI-compatible API endpoint.
+
+## Related Work
+
+ARISE builds on ideas from several research directions:
+
+**LLMs as Tool Makers.** [Cai et al., 2023](https://arxiv.org/abs/2305.17126) showed that LLMs can create reusable tools — a "tool maker" model generates Python functions that a cheaper "tool user" model invokes. ARISE extends this with automated testing, versioning, and a feedback loop driven by real agent failures.
+
+**VOYAGER.** [Wang et al., 2023](https://arxiv.org/abs/2305.16291) demonstrated an open-ended agent in Minecraft that builds a skill library through exploration. ARISE applies the same skill library pattern to real-world software agents, adding sandbox validation and adversarial testing that game environments don't require.
+
+**CREATOR.** [Qian et al., 2023](https://arxiv.org/abs/2305.14318) proposed disentangling abstract reasoning from concrete tool creation, letting LLMs create tools when existing ones are insufficient. ARISE operationalizes this with trajectory analysis to detect when creation should trigger.
+
+**Automated Design of Agentic Systems (ADAS).** [Hu et al., 2024](https://arxiv.org/abs/2408.08435) explored meta-agents that design other agents, including their tools and prompts. ARISE focuses specifically on the tool creation component with a framework-agnostic approach.
+
+**Toolformer.** [Schick et al., 2023](https://arxiv.org/abs/2302.04761) showed LLMs can learn *when* to use tools through self-supervised training. ARISE complements this by addressing *which* tools should exist — creating them at runtime rather than assuming a fixed toolset.
+
+**CRAFT.** [Yuan et al., 2023](https://arxiv.org/abs/2309.17428) introduced a framework where agents create and retrieve tools from a shared library. ARISE adds the production engineering layer: sandboxed testing, adversarial validation, version control, and rollback.
 
 ## License
 
