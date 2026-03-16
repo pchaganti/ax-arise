@@ -34,5 +34,10 @@ class ARISEConfig:
     aws_region: str = "us-east-1"
     skill_cache_ttl_seconds: int = 30
 
+    # Skill registry
+    registry_bucket: str | None = None
+    registry_prefix: str = "arise-registry"
+    registry_check_before_synthesis: bool = True
+
     # Logging
     verbose: bool = True

@@ -41,11 +41,20 @@ class ARISEWorker:
             backend=config.sandbox_backend,
             timeout=config.sandbox_timeout,
         )
+        registry = None
+        if config.registry_bucket:
+            from arise.registry import SkillRegistry
+            registry = SkillRegistry(
+                bucket=config.registry_bucket,
+                prefix=config.registry_prefix,
+                region=config.aws_region,
+            )
         self._forge = SkillForge(
             model=config.model,
             sandbox=self._sandbox,
             max_retries=config.max_refinement_attempts,
             allowed_imports=config.allowed_imports,
+            registry=registry,
         )
         self._trigger = EvolutionTrigger(config)
 

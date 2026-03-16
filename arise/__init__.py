@@ -5,6 +5,7 @@ from arise.skills.sandbox import Sandbox
 from arise.skills.forge import SkillForge
 from arise.stores.base import SkillStore, SkillStoreWriter, TrajectoryReporter
 from arise.types import Skill, SkillStatus, SkillOrigin, ToolSpec, Trajectory, Step, GapAnalysis
+from arise.registry import SkillRegistry
 
 __all__ = [
     "ARISE",
@@ -22,6 +23,7 @@ __all__ = [
     "Trajectory",
     "Step",
     "GapAnalysis",
+    "SkillRegistry",
 ]
 
 __version__ = "0.1.0"

@@ -84,11 +84,12 @@ def _check_imports(code: str, allowed: list[str]) -> list[str]:
 
 
 class SkillForge:
-    def __init__(self, model: str, sandbox: Sandbox, max_retries: int = 3, allowed_imports: list[str] | None = None):
+    def __init__(self, model: str, sandbox: Sandbox, max_retries: int = 3, allowed_imports: list[str] | None = None, registry=None):
         self.model = model
         self.sandbox = sandbox
         self.max_retries = max_retries
         self.allowed_imports = allowed_imports
+        self.registry = registry  # SkillRegistry | None
 
     def detect_gaps(
         self,
@@ -129,6 +130,24 @@ class SkillForge:
         library,
         example_trajectories: list[Trajectory] | None = None,
     ) -> Skill:
+        # Check registry for a pre-built skill before synthesizing
+        if self.registry is not None:
+            try:
+                entries = self.registry.search(gap.description, limit=3)
+                if entries:
+                    best = entries[0]
+                    if best.avg_success_rate > 0.7:
+                        try:
+                            skill = self.registry.pull(best.name)
+                            result = self.sandbox.test_skill(skill)
+                            if result.success:
+                                _log(f"Found '{best.name}' in registry, skipping synthesis")
+                                return skill
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
         active = library.get_active_skills()
         tools_desc = "\n".join(
             f"- {s.name}: {s.description}" for s in active

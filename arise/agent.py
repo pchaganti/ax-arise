@@ -91,11 +91,20 @@ class ARISE:
             self.trajectory_store = TrajectoryStore(self.config.trajectory_store_path)
             self._skill_store = LocalSkillStore(self.skill_library)
             self._trajectory_reporter = LocalTrajectoryReporter(self.trajectory_store)
+            registry = None
+            if self.config.registry_bucket:
+                from arise.registry import SkillRegistry
+                registry = SkillRegistry(
+                    bucket=self.config.registry_bucket,
+                    prefix=self.config.registry_prefix,
+                    region=self.config.aws_region,
+                )
             self.forge = SkillForge(
                 model=self.config.model,
                 sandbox=self.sandbox,
                 max_retries=self.config.max_refinement_attempts,
                 allowed_imports=self.config.allowed_imports,
+                registry=registry,
             )
             self.trigger = EvolutionTrigger(self.config)
 
