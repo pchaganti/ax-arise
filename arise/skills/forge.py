@@ -7,6 +7,9 @@ from arise.llm import llm_call_structured, llm_call
 
 def _log(msg: str):
     print(f"[ARISE:forge] {msg}", flush=True)
+import ast
+import re
+
 from arise.prompts import (
     ADVERSARIAL_TEST_PROMPT,
     GAP_DETECTION_PROMPT,
@@ -18,11 +21,74 @@ from arise.skills.sandbox import Sandbox
 from arise.types import GapAnalysis, Skill, SkillOrigin, SkillStatus, Trajectory
 
 
+def _extract_imports(code: str) -> set[str]:
+    """Extract top-level module names from all import statements in code."""
+    modules: set[str] = set()
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # Fallback: regex-based extraction
+        for match in re.finditer(r'^\s*(?:import|from)\s+(\w+)', code, re.MULTILINE):
+            modules.add(match.group(1))
+        return modules
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                modules.add(node.module.split('.')[0])
+    return modules
+
+
+_DYNAMIC_IMPORT_PATTERNS = [
+    re.compile(r'__import__\s*\(\s*["\'](\w+)'),           # __import__("os")
+    re.compile(r'importlib\.import_module\s*\(\s*["\'](\w+)'),  # importlib.import_module("os")
+    re.compile(r'exec\s*\(\s*["\'].*?\bimport\b'),         # exec("import os")
+    re.compile(r'eval\s*\(\s*["\'].*?import'),              # eval("__import__('os')")
+]
+
+
+def _detect_dynamic_imports(code: str) -> tuple[set[str], bool]:
+    """Detect dynamic import patterns. Returns (module_names, has_unsafe_exec)."""
+    modules: set[str] = set()
+    has_unsafe = False
+    for i, pattern in enumerate(_DYNAMIC_IMPORT_PATTERNS):
+        for match in pattern.finditer(code):
+            if i < 2:
+                # __import__ and importlib — we can extract the module name
+                modules.add(match.group(1))
+            else:
+                # exec/eval with import — can't reliably extract, flag as unsafe
+                has_unsafe = True
+    return modules, has_unsafe
+
+
+def _check_imports(code: str, allowed: list[str]) -> list[str]:
+    """Return list of disallowed imports found in code. Empty list = all good.
+
+    Checks both static imports (import/from) and dynamic imports
+    (__import__, importlib.import_module, exec/eval with import).
+    """
+    static = _extract_imports(code)
+    dynamic, has_unsafe = _detect_dynamic_imports(code)
+
+    allowed_set = set(allowed)
+    disallowed = sorted((static | dynamic) - allowed_set)
+
+    if has_unsafe:
+        disallowed.append("__dynamic_import__")
+
+    return disallowed
+
+
 class SkillForge:
-    def __init__(self, model: str, sandbox: Sandbox, max_retries: int = 3):
+    def __init__(self, model: str, sandbox: Sandbox, max_retries: int = 3, allowed_imports: list[str] | None = None):
         self.model = model
         self.sandbox = sandbox
         self.max_retries = max_retries
+        self.allowed_imports = allowed_imports
 
     def detect_gaps(
         self,
@@ -70,12 +136,20 @@ class SkillForge:
 
         evidence = "\n".join(gap.evidence) if gap.evidence else "(none)"
 
+        import_constraint = ""
+        if self.allowed_imports:
+            import_constraint = (
+                f"\n\nALLOWED IMPORTS (you may ONLY use these modules): "
+                f"{', '.join(self.allowed_imports)}\n"
+                f"Do NOT import any module not in this list."
+            )
+
         prompt = SYNTHESIS_PROMPT.format(
             description=gap.description,
             signature=gap.suggested_signature,
             existing_tools=tools_desc,
             evidence=evidence,
-        )
+        ) + import_constraint
 
         _log(f"Synthesizing '{gap.suggested_name}'...")
         raw = llm_call_structured(
@@ -93,6 +167,19 @@ class SkillForge:
 
         # Validate in sandbox, refine if needed
         for attempt in range(self.max_retries):
+            # Check import restrictions before sandbox testing
+            if self.allowed_imports:
+                disallowed = _check_imports(skill.implementation, self.allowed_imports)
+                if disallowed:
+                    _log(f"Disallowed imports found: {disallowed}, refining...")
+                    skill = self.refine(
+                        skill,
+                        f"Disallowed imports: {', '.join(disallowed)}. "
+                        f"Only these imports are allowed: {', '.join(self.allowed_imports)}",
+                        context=evidence,
+                    )
+                    continue
+
             _log(f"Testing in sandbox (attempt {attempt + 1}/{self.max_retries})...")
             result = self.sandbox.test_skill(skill)
             if result.success:
@@ -106,15 +193,16 @@ class SkillForge:
                 errors += f"\nStderr: {result.stderr}"
 
             _log(f"Tests failed ({result.total_failed} failures), refining...")
-            skill = self.refine(skill, errors)
+            skill = self.refine(skill, errors, context=evidence)
 
         return skill
 
-    def refine(self, skill: Skill, feedback: str) -> Skill:
+    def refine(self, skill: Skill, feedback: str, context: str = "(none)") -> Skill:
         _log(f"Refining '{skill.name}'...")
         prompt = REFINEMENT_PROMPT.format(
             name=skill.name,
             description=skill.description,
+            context=context,
             implementation=skill.implementation,
             test_suite=skill.test_suite,
             feedback=feedback,
@@ -136,6 +224,11 @@ class SkillForge:
         )
 
     def compose(self, skill_a: Skill, skill_b: Skill, description: str) -> Skill:
+        """Compose two skills into a higher-level skill.
+
+        Note: This method is available for manual use but is NOT called automatically
+        during the evolution cycle. Automatic composition is planned for a future release.
+        """
         prompt = f"""\
 Combine these two Python tools into a single higher-level tool.
 

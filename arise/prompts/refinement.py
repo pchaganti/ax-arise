@@ -4,6 +4,9 @@ You need to fix/improve a Python tool that has issues.
 FUNCTION NAME: {name}
 DESCRIPTION: {description}
 
+ORIGINAL CONTEXT (tasks that needed this tool):
+{context}
+
 CURRENT IMPLEMENTATION:
 ```python
 {implementation}
@@ -17,7 +20,7 @@ CURRENT TEST SUITE:
 FEEDBACK / ERRORS:
 {feedback}
 
-Fix the implementation (and tests if needed) based on the feedback. Keep the same function name and signature if possible.
+Fix the implementation (and tests if needed) based on the feedback. Keep the same function name and signature if possible. Use the original context to understand what the tool is supposed to do.
 
 CRITICAL RULES:
 - All imports must be INSIDE the function body, not at module level. The function is loaded via exec() and must be fully self-contained. Tests can have imports at their top level.

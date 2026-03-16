@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any, Callable
-from datetime import datetime
-import uuid
+
+_VALID_SKILL_NAME = re.compile(r'^[a-z_][a-z0-9_]*$')
 
 
 class SkillStatus(Enum):
@@ -38,6 +41,13 @@ class Skill:
     success_count: int = 0
     avg_latency_ms: float = 0.0
     error_log: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.name and not _VALID_SKILL_NAME.match(self.name):
+            raise ValueError(
+                f"Invalid skill name '{self.name}': must match [a-z_][a-z0-9_]* "
+                f"(lowercase, underscores, no spaces or special characters)"
+            )
 
     @property
     def success_rate(self) -> float:

@@ -18,6 +18,24 @@ from arise.types import Skill, SkillOrigin, SkillStatus, Step, ToolSpec, Traject
 
 
 class ARISE:
+    """Self-evolving agent framework that synthesizes tools at runtime.
+
+    ARISE wraps your agent function and automatically detects capability gaps
+    from failure trajectories, synthesizes new Python tools via LLM, tests them
+    in a sandbox, and promotes passing tools to the active library.
+
+    Args:
+        agent_fn: Your agent function with signature (task: str, tools: list) -> str.
+        reward_fn: Evaluates trajectory quality, returns float in [0.0, 1.0].
+        model: LLM model for tool synthesis (not your agent's model).
+        sandbox: Custom sandbox for testing generated code.
+        skill_library: Custom local skill library (local mode only).
+        config: Full configuration object.
+        agent: A Strands Agent instance (alternative to agent_fn).
+        skill_store: Remote skill store for distributed mode (e.g., S3SkillStore).
+        trajectory_reporter: Remote trajectory reporter for distributed mode (e.g., SQSTrajectoryReporter).
+    """
+
     def __init__(
         self,
         agent_fn: Callable[[str, list[Callable]], str] | None = None,
@@ -77,6 +95,7 @@ class ARISE:
                 model=self.config.model,
                 sandbox=self.sandbox,
                 max_retries=self.config.max_refinement_attempts,
+                allowed_imports=self.config.allowed_imports,
             )
             self.trigger = EvolutionTrigger(self.config)
 
@@ -85,6 +104,11 @@ class ARISE:
         self._last_evolution_episode = 0
 
     def run(self, task: str, **kwargs: Any) -> str:
+        """Run a single task through the agent with the current tool library.
+
+        Returns the agent's response string. Trajectories are recorded and
+        evolution is triggered automatically in local mode.
+        """
         self._episode_count += 1
         tool_specs = self._skill_store.get_tool_specs()
 
@@ -124,7 +148,12 @@ class ARISE:
         trajectory.outcome = str(result)[:1000]
         trajectory.metadata.update(kwargs)
         reward = self.reward_fn(trajectory)
-        trajectory.reward = reward
+        if not isinstance(reward, (int, float)):
+            raise TypeError(f"reward_fn must return a number, got {type(reward).__name__}")
+        reward = float(reward)
+        if reward != reward:  # NaN check
+            raise ValueError("reward_fn returned NaN")
+        trajectory.reward = max(0.0, min(1.0, reward))
 
         # Report trajectory (fire-and-forget)
         if self._trajectory_reporter is not None:
@@ -154,6 +183,12 @@ class ARISE:
         return result
 
     def train(self, tasks: list[str], num_episodes: int | None = None):
+        """Run multiple tasks in sequence, cycling through the task list.
+
+        Args:
+            tasks: List of task strings to train on.
+            num_episodes: Total episodes to run (defaults to len(tasks)).
+        """
         total = num_episodes or len(tasks)
         for i in range(total):
             task = tasks[i % len(tasks)]
@@ -168,6 +203,10 @@ class ARISE:
             print(f"[ARISE] Active skills: {len(self._skill_store.get_active_skills())}")
 
     def evolve(self):
+        """Manually trigger an evolution cycle: detect gaps, synthesize tools, test and promote.
+
+        Only works in local mode. In distributed mode, evolution is handled by ARISEWorker.
+        """
         if self.forge is None or self.trajectory_store is None:
             return
 
@@ -237,6 +276,10 @@ class ARISE:
         # TODO: re-enable with better heuristics in v0.2
 
     def add_skill(self, fn: Callable, description: str = ""):
+        """Manually add a Python function as a skill to the library.
+
+        The function source is extracted via inspect and promoted immediately.
+        """
         if self.skill_library is None:
             raise RuntimeError("add_skill() is not supported in distributed mode")
         source = inspect.getsource(fn)
@@ -251,6 +294,7 @@ class ARISE:
         self.skill_library.promote(skill.id)
 
     def remove_skill(self, name: str):
+        """Remove an active skill by name. Raises ValueError if not found."""
         if self.skill_library is None:
             raise RuntimeError("remove_skill() is not supported in distributed mode")
         for skill in self.skill_library.get_active_skills():
@@ -285,6 +329,7 @@ class ARISE:
         return stats
 
     def export(self, path: str):
+        """Export all active skills as individual .py files to the given directory."""
         if self.skill_library is None:
             raise RuntimeError("export() is not supported in distributed mode")
         import os
@@ -296,6 +341,7 @@ class ARISE:
                 f.write(content)
 
     def rollback(self, version: int):
+        """Rollback the skill library to a previous version checkpoint."""
         if self.skill_library is None:
             raise RuntimeError("rollback() is not supported in distributed mode")
         self.skill_library.rollback(version)

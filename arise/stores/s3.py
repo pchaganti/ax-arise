@@ -126,7 +126,9 @@ class S3SkillStore(SkillStore):
     def _read_manifest(self) -> dict:
         key = f"{self._prefix}/manifest.json"
         resp = self._s3.get_object(Bucket=self._bucket, Key=key)
-        return json.loads(resp["Body"].read())
+        manifest = json.loads(resp["Body"].read())
+        manifest["_etag"] = resp.get("ETag", "")
+        return manifest
 
     def _read_skill(self, skill_id: str) -> Skill | None:
         key = f"{self._prefix}/skills/{skill_id}.json"
@@ -173,11 +175,19 @@ class S3SkillStoreWriter(S3SkillStore, SkillStoreWriter):
         skill.status = SkillStatus.ACTIVE
         self._write_skill(skill)
 
-        manifest = self._read_manifest()
-        if skill_id not in manifest["active_skill_ids"]:
-            manifest["active_skill_ids"].append(skill_id)
-        manifest["version"] += 1
-        self._write_manifest(manifest)
+        def _add_skill(manifest):
+            if skill_id not in manifest["active_skill_ids"]:
+                manifest["active_skill_ids"].append(skill_id)
+            manifest["version"] += 1
+
+        try:
+            manifest = self._update_manifest_atomic(_add_skill)
+        except Exception:
+            # Fallback to non-atomic write if conditional writes unsupported
+            manifest = self._read_manifest()
+            manifest.pop("_etag", None)
+            _add_skill(manifest)
+            self._write_manifest(manifest)
 
         # Invalidate cache
         self._cached_version = manifest["version"]
@@ -190,13 +200,21 @@ class S3SkillStoreWriter(S3SkillStore, SkillStoreWriter):
             skill.status = SkillStatus.DEPRECATED
             self._write_skill(skill)
 
-        manifest = self._read_manifest()
-        if skill_id in manifest["active_skill_ids"]:
-            manifest["active_skill_ids"].remove(skill_id)
-            manifest["version"] += 1
+        def _remove_skill(manifest):
+            if skill_id in manifest["active_skill_ids"]:
+                manifest["active_skill_ids"].remove(skill_id)
+                manifest["version"] += 1
+
+        try:
+            manifest = self._update_manifest_atomic(_remove_skill)
+        except Exception:
+            manifest = self._read_manifest()
+            manifest.pop("_etag", None)
+            _remove_skill(manifest)
             self._write_manifest(manifest)
-            self._cached_version = manifest["version"]
-            self._cached_skills = [s for s in self._cached_skills if s.id != skill_id]
+
+        self._cached_version = manifest.get("version", self._cached_version)
+        self._cached_skills = [s for s in self._cached_skills if s.id != skill_id]
 
     def checkpoint(self, description: str = "") -> int:
         manifest = self._read_manifest()
@@ -212,5 +230,40 @@ class S3SkillStoreWriter(S3SkillStore, SkillStoreWriter):
 
     def _write_manifest(self, manifest: dict) -> None:
         key = self._manifest_key()
-        body = json.dumps(manifest)
+        # Strip internal metadata before writing
+        to_write = {k: v for k, v in manifest.items() if not k.startswith("_")}
+        body = json.dumps(to_write)
         self._s3.put_object(Bucket=self._bucket, Key=key, Body=body, ContentType="application/json")
+
+    def _update_manifest_atomic(self, updater, max_retries: int = 3) -> dict:
+        """Read-modify-write manifest with optimistic locking via ETag.
+
+        updater(manifest) should mutate the manifest dict in place.
+        Retries on concurrent modification.
+        """
+        for attempt in range(max_retries):
+            manifest = self._read_manifest()
+            etag = manifest.pop("_etag", "")
+            updater(manifest)
+            key = self._manifest_key()
+            to_write = {k: v for k, v in manifest.items() if not k.startswith("_")}
+            body = json.dumps(to_write)
+            try:
+                put_kwargs = {
+                    "Bucket": self._bucket,
+                    "Key": key,
+                    "Body": body,
+                    "ContentType": "application/json",
+                }
+                # Use If-Match for conditional write if we have an ETag
+                if etag:
+                    put_kwargs["IfMatch"] = etag
+                self._s3.put_object(**put_kwargs)
+                return manifest
+            except self._s3.exceptions.ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code == "PreconditionFailed" and attempt < max_retries - 1:
+                    print(f"[ARISE] Manifest write conflict, retrying ({attempt + 1}/{max_retries})...", file=sys.stderr)
+                    continue
+                raise
+        raise RuntimeError("Failed to update manifest after retries")

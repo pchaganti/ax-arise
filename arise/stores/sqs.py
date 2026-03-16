@@ -34,15 +34,28 @@ def _serialize_trajectory(trajectory: Trajectory) -> str:
 
 def deserialize_trajectory(body: str) -> Trajectory:
     data = json.loads(body)
-    steps = [Step(**s) for s in data["steps"]]
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected JSON object, got {type(data).__name__}")
+    if "task" not in data:
+        raise ValueError("Missing required field 'task'")
+
+    raw_steps = data.get("steps", [])
+    if not isinstance(raw_steps, list):
+        raise ValueError(f"'steps' must be a list, got {type(raw_steps).__name__}")
+
+    steps = []
+    for s in raw_steps:
+        if isinstance(s, dict):
+            steps.append(Step(**{k: v for k, v in s.items() if k in Step.__dataclass_fields__}))
+
     return Trajectory(
-        task=data["task"],
+        task=str(data["task"]),
         steps=steps,
-        outcome=data.get("outcome", ""),
-        reward=data.get("reward", 0.0),
-        skill_library_version=data.get("skill_library_version", 0),
+        outcome=str(data.get("outcome", "")),
+        reward=float(data.get("reward", 0.0)),
+        skill_library_version=int(data.get("skill_library_version", 0)),
         timestamp=datetime.fromisoformat(data["timestamp"]) if data.get("timestamp") else datetime.now(),
-        metadata=data.get("metadata", {}),
+        metadata=data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {},
     )
 
 

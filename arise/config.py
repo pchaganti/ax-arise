@@ -17,10 +17,6 @@ class ARISEConfig:
     plateau_min_improvement: float = 0.05
     max_evolutions_per_hour: int = 3
 
-    # Reward weights
-    task_reward_weight: float = 1.0
-    efficiency_bonus: float = 0.1
-
     # Paths
     skill_store_path: str = "./arise_skills"
     trajectory_store_path: str = "./arise_trajectories"

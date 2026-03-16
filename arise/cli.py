@@ -143,7 +143,28 @@ def main():
                         print(f"       Task: {task[:60]}")
 
         if args.dry_run:
-            print("\n[DRY RUN] Would analyze gaps and synthesize tools — no LLM calls made.")
+            if not failures:
+                print("\n[DRY RUN] No failures to analyze — nothing to evolve.")
+            else:
+                from arise.skills.forge import SkillForge
+                from arise.skills.sandbox import Sandbox
+                sandbox = Sandbox(backend="subprocess", timeout=30)
+                forge = SkillForge(model=config.model, sandbox=sandbox)
+                print("\n[DRY RUN] Running gap detection (1 LLM call)...")
+                gaps = forge.detect_gaps(failures, lib)
+                if gaps:
+                    active_names = {s.name for s in lib.get_active_skills()}
+                    print(f"\nDetected {len(gaps)} capability gaps:")
+                    for g in gaps:
+                        exists = " (already exists)" if g.suggested_name in active_names else ""
+                        print(f"  - {g.suggested_name}: {g.description}{exists}")
+                        print(f"    Signature: {g.suggested_signature}")
+                        if g.evidence:
+                            for e in g.evidence[:2]:
+                                print(f"    Evidence: {e[:80]}")
+                    print("\nRun without --dry-run to synthesize these tools.")
+                else:
+                    print("\n[DRY RUN] No capability gaps detected.")
         else:
             print("\nUse --dry-run to preview, or run evolve() from Python to execute.")
 

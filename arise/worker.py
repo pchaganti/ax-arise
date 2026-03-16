@@ -45,6 +45,7 @@ class ARISEWorker:
             model=config.model,
             sandbox=self._sandbox,
             max_retries=config.max_refinement_attempts,
+            allowed_imports=config.allowed_imports,
         )
         self._trigger = EvolutionTrigger(config)
 
@@ -95,9 +96,11 @@ class ARISEWorker:
                 if len(self._trajectory_buffer) > self._max_buffer_size:
                     self._trajectory_buffer = self._trajectory_buffer[-self._max_buffer_size:]
             except Exception as e:
-                print(f"[ARISE Worker] Failed to parse message: {e}", file=sys.stderr)
+                body_preview = msg.get("Body", "")[:200]
+                print(f"[ARISE Worker] Failed to parse message: {e} | body: {body_preview}", file=sys.stderr)
 
-            # Delete message from queue
+            # Always delete — prevents poison messages from blocking the queue.
+            # Parse failures are logged above for debugging.
             self._sqs.delete_message(
                 QueueUrl=self.config.sqs_queue_url,
                 ReceiptHandle=msg["ReceiptHandle"],
