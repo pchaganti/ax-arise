@@ -6,6 +6,7 @@ from arise.rewards.builtin import (
     llm_judge_reward,
 )
 from arise.rewards.composite import CompositeReward
+from arise.rewards.learned import LearnedReward
 
 __all__ = [
     "task_success",
@@ -14,4 +15,5 @@ __all__ = [
     "efficiency_reward",
     "llm_judge_reward",
     "CompositeReward",
+    "LearnedReward",
 ]

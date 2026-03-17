@@ -8,6 +8,7 @@ from arise.stores.base import SkillStore, SkillStoreWriter, TrajectoryReporter
 from arise.types import Skill, SkillStatus, SkillOrigin, ToolSpec, Trajectory, Step, GapAnalysis
 from arise.registry import SkillRegistry
 from arise.llm_router import LLMRouter
+from arise.rewards.learned import LearnedReward
 
 __all__ = [
     "ARISE",
@@ -28,6 +29,7 @@ __all__ = [
     "GapAnalysis",
     "SkillRegistry",
     "LLMRouter",
+    "LearnedReward",
 ]
 
 __version__ = "0.1.0"
