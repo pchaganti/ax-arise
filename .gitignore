@@ -39,5 +39,8 @@ env/
 htmlcov/
 .pytest_cache/
 
+# AgentCore build artifacts
+.bedrock_agentcore/
+
 # Misc
 *.log

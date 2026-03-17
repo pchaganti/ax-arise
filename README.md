@@ -147,7 +147,7 @@ def search_logs(query: str) -> str:
     ...
 
 agent = Agent(
-    model=BedrockModel(model_id="us.anthropic.claude-sonnet-4-20250514"),
+    model=BedrockModel(model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
     tools=[search_logs],
     system_prompt="You are a DevOps assistant.",
 )
@@ -453,6 +453,135 @@ pip install arise-ai[all]           # everything
 ```
 
 Without litellm, ARISE uses raw HTTP requests to any OpenAI-compatible API endpoint.
+
+## New Features
+
+### Skill Registry
+
+`SkillRegistry` is an S3-backed registry for sharing evolved tools across projects — think npm for agent tools. Once a skill proves its value in one project, you can publish it and pull it in another.
+
+```python
+from arise.registry import SkillRegistry
+
+registry = SkillRegistry(bucket="my-arise-registry")
+
+# Publish a skill after it has proven itself
+registry.publish(skill, tags=["json", "parsing"])
+
+# Before synthesizing, check if a matching skill already exists
+entries = registry.search("parse CSV file")
+if entries:
+    skill = registry.pull(entries[0].name)
+```
+
+Enable registry lookups before synthesis via config:
+
+```python
+config = ARISEConfig(
+    registry_bucket="my-arise-registry",
+    registry_check_before_synthesis=True,
+)
+```
+
+When `registry_check_before_synthesis` is `True`, `SkillForge` checks the registry before invoking the LLM. If a matching skill with `avg_success_rate > 0.7` is found and passes sandbox validation, it is returned immediately — no LLM call needed.
+
+### Multi-Model Synthesis
+
+`LLMRouter` routes different task types to different models. Use a cheap model for gap detection and an expensive one for code synthesis. The router tracks per-model success rates and can auto-select the best model over time.
+
+```python
+from arise.llm_router import LLMRouter
+
+router = LLMRouter(
+    routes={
+        "gap_detection": "gpt-4o-mini",
+        "synthesis": "claude-sonnet-4-5-20250929",
+        "refinement": "gpt-4o-mini",
+    },
+    auto_select=True,  # auto-promote best model based on sandbox pass rate
+)
+
+arise = ARISE(agent_fn=my_agent, reward_fn=task_success, llm_router=router)
+```
+
+### Skill A/B Testing
+
+`SkillABTest` runs two versions of a skill simultaneously and auto-promotes the winner after a configurable minimum number of episodes. When ARISE evolves a refined skill, it creates an A/B test against the original instead of immediately replacing it.
+
+```python
+from arise.skills.ab_test import SkillABTest
+
+ab = SkillABTest(skill_a=v1, skill_b=v2, min_episodes=20)
+
+# Each episode, get the assigned variant
+variant = ab.get_variant()
+# ...run episode...
+ab.record(variant, success=True)
+
+# Once concluded, winner is auto-promoted, loser deprecated
+if ab.status == "concluded":
+    print(f"Winner: {ab.winner.name}")
+```
+
+### Incremental Evolution
+
+`forge.patch()` applies a targeted fix to an existing skill based on specific failure patterns, rather than performing a full re-synthesis. Patched skills carry `origin=SkillOrigin.PATCHED` and a `parent_id` pointing to the original.
+
+```python
+# When a skill fails on specific inputs, patch it minimally
+patched = forge.patch(existing_skill, failures=recent_failure_trajectories)
+
+# Falls back to full synthesis if the patch doesn't pass sandbox validation
+```
+
+The patch prompt includes only the failing cases and the current implementation, keeping the LLM context small and the change surgical. Patched skills enter an A/B test against the original before being promoted.
+
+### Reward Learning
+
+`LearnedReward` learns a reward function from human feedback using few-shot LLM prompting. Before enough examples are collected it falls back to `task_success`; once the threshold is reached it scores new trajectories using recent human-scored examples as in-context demonstrations.
+
+```python
+from arise.rewards.learned import LearnedReward
+
+reward = LearnedReward(min_examples=10, persist_path="./feedback", model="gpt-4o-mini")
+
+# Collect human feedback
+reward.add_feedback(trajectory, score=0.9)
+
+# Use as a standard reward_fn — falls back to task_success until min_examples reached
+arise = ARISE(agent_fn=my_agent, reward_fn=reward)
+```
+
+Feedback examples are optionally persisted to disk for cross-session learning.
+
+## AgentCore Demo
+
+The `demo/agentcore/` directory contains a self-evolving DevOps agent deployed on Amazon Bedrock AgentCore. It uses the Strands Agents SDK with a Bedrock Claude model and ARISE in distributed mode (S3 skills + SQS trajectories).
+
+**Architecture:**
+
+- Agent process is stateless: reads skills from S3, reports trajectories to SQS via fire-and-forget
+- Background ARISE worker consumes trajectories, runs evolution, writes new skills to S3
+- Agent starts with zero tools and evolves everything it needs on the fly
+- Deployed via `agentcore deploy` using the A2A server protocol over Docker
+
+**Quick deploy:**
+
+```bash
+cd demo/agentcore
+
+# Set required environment variables
+export ARISE_SKILL_BUCKET=<YOUR_BUCKET>
+export ARISE_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/<ACCOUNT_ID>/arise-trajectories
+
+# Deploy to AgentCore
+agentcore deploy --region us-west-2
+
+# Invoke
+agentcore invoke --agent arise-devops --payload '{"task": "Compute SHA-256 of hello world"}'
+```
+
+See `demo/agentcore/README.md` for full setup, IAM requirements, and expected agent evolution output.
 
 ## Related Work
 

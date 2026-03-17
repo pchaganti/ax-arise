@@ -11,11 +11,11 @@ agents:
     container_runtime: docker
     source_path: .
     aws:
-      execution_role: arn:aws:iam::436776987862:role/AmazonBedrockAgentCoreSDKRuntime-us-west-2-331c7a03e7
+      execution_role: arn:aws:iam::<ACCOUNT_ID>:role/<EXECUTION_ROLE_NAME>
       execution_role_auto_create: false
-      account: '436776987862'
+      account: '<ACCOUNT_ID>'
       region: us-west-2
-      ecr_repository: 436776987862.dkr.ecr.us-west-2.amazonaws.com/arise-devops
+      ecr_repository: <ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/arise-devops
       ecr_auto_create: false
       s3_path: null
       s3_auto_create: false
@@ -30,9 +30,9 @@ agents:
         idle_runtime_session_timeout: null
         max_lifetime: null
     bedrock_agentcore:
-      agent_id: arise_devops-8nbEhH7uPH
-      agent_arn: arn:aws:bedrock-agentcore:us-west-2:436776987862:runtime/arise_devops-8nbEhH7uPH
-      agent_session_id: e0712fee-6732-4b7f-9cfc-02abc7299957
+      agent_id: <AGENT_ID>
+      agent_arn: arn:aws:bedrock-agentcore:us-west-2:<ACCOUNT_ID>:runtime/<AGENT_ID>
+      agent_session_id: null
     codebuild:
       project_name: null
       execution_role: null

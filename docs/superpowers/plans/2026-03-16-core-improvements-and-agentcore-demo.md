@@ -832,8 +832,8 @@ boto3>=1.34
 ```bash
 cd demo/agentcore
 pip install -r requirements.txt
-ARISE_SKILL_BUCKET=arise-test-436776987862 \
-ARISE_QUEUE_URL=https://us-west-2.queue.amazonaws.com/436776987862/arise-trajectories-test \
+ARISE_SKILL_BUCKET=<YOUR_BUCKET> \
+ARISE_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/<ACCOUNT_ID>/arise-trajectories-test \
 OPENAI_API_KEY=... \
 python agent.py "Parse this CSV and return the average of column 2: name,score\nAlice,85\nBob,92\nCharlie,78"
 ```
@@ -885,8 +885,8 @@ AWS_PROFILE=apartment-ai python -c "
 from arise.worker import ARISEWorker
 from arise.config import ARISEConfig
 config = ARISEConfig(
-    s3_bucket='arise-test-436776987862',
-    sqs_queue_url='https://us-west-2.queue.amazonaws.com/436776987862/arise-trajectories-test',
+    s3_bucket='<YOUR_BUCKET>',
+    sqs_queue_url='https://sqs.us-west-2.amazonaws.com/<ACCOUNT_ID>/arise-trajectories-test',
     aws_region='us-west-2',
 )
 worker = ARISEWorker(config)
