@@ -32,7 +32,7 @@ __all__ = [
     "LearnedReward",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 def create_distributed_arise(
