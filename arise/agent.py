@@ -267,15 +267,45 @@ class ARISE:
         if self.config.verbose:
             print(f"[ARISE] Found {len(gaps)} capability gaps.")
 
-        # Skip gaps where a skill with that name already exists
-        active_names = {s.name for s in self._skill_store.get_active_skills()}
-        gaps = [g for g in gaps if g.suggested_name not in active_names]
-        if not gaps:
+        # Build map of active skills by name for patch attempts
+        active_skills_by_name = {s.name: s for s in self._skill_store.get_active_skills()}
+
+        # Separate gaps: those with existing skills (patch candidates) vs new skills
+        patch_gaps = [g for g in gaps if g.suggested_name in active_skills_by_name]
+        new_gaps = [g for g in gaps if g.suggested_name not in active_skills_by_name]
+
+        if not patch_gaps and not new_gaps:
             if self.config.verbose:
                 print("[ARISE] All detected gaps already have active skills.")
             return
 
-        for gap in gaps:
+        # Try patching existing skills first
+        for gap in patch_gaps:
+            name = gap.suggested_name
+            existing_skill = active_skills_by_name[name]
+            relevant_failures = [
+                t for t in failures
+                if any(s.action == name or (s.error and name in (s.error or "")) for s in t.steps)
+            ] or failures[:5]
+
+            if self.config.verbose:
+                print(f"[ARISE] Patching existing skill '{name}' instead of full synthesis...")
+
+            try:
+                patched = self.forge.patch(existing_skill, relevant_failures)
+                result = self.sandbox.test_skill(patched)
+                if result.success:
+                    self.start_ab_test(existing_skill, patched)
+                    if self.config.verbose:
+                        print(f"[ARISE] Patch for '{name}' passed sandbox — starting A/B test.")
+                else:
+                    if self.config.verbose:
+                        print(f"[ARISE] Patch for '{name}' failed sandbox — skipping.")
+            except Exception as e:
+                if self.config.verbose:
+                    print(f"[ARISE] Failed to patch '{name}': {e}")
+
+        for gap in new_gaps:
             if self.config.verbose:
                 print(f"[ARISE] Synthesizing tool: {gap.suggested_name}...")
 

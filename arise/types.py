@@ -21,6 +21,7 @@ class SkillOrigin(Enum):
     SYNTHESIZED = "synthesized"
     REFINED = "refined"
     COMPOSED = "composed"
+    PATCHED = "patched"
 
 
 @dataclass

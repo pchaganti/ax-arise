@@ -13,6 +13,7 @@ import re
 from arise.prompts import (
     ADVERSARIAL_TEST_PROMPT,
     GAP_DETECTION_PROMPT,
+    PATCH_PROMPT,
     SYNTHESIS_PROMPT,
     TEST_GENERATION_PROMPT,
     REFINEMENT_PROMPT,
@@ -245,6 +246,35 @@ class SkillForge:
             test_suite=raw.get("test_suite", skill.test_suite),
             version=skill.version + 1,
             origin=SkillOrigin.REFINED,
+            parent_id=skill.id,
+        )
+
+    def patch(self, skill: Skill, failures: list[Trajectory]) -> Skill:
+        """Apply a minimal fix to an existing skill based on specific failures."""
+        failure_desc = "\n\n".join(
+            f"Task: {t.task}\nError: {t.steps[-1].error if t.steps and t.steps[-1].error else t.outcome}"
+            for t in failures[:5]
+        )
+
+        model = self.llm_router.get_model("refinement") if self.llm_router else self.model
+
+        raw = llm_call_structured(
+            [{"role": "user", "content": PATCH_PROMPT.format(
+                name=skill.name,
+                description=skill.description,
+                implementation=skill.implementation,
+                failures=failure_desc,
+            )}],
+            model=model,
+        )
+
+        return Skill(
+            name=skill.name,
+            description=skill.description,
+            implementation=raw["implementation"],
+            test_suite=skill.test_suite,
+            version=skill.version + 1,
+            origin=SkillOrigin.PATCHED,
             parent_id=skill.id,
         )
 
