@@ -39,5 +39,9 @@ class ARISEConfig:
     registry_prefix: str = "arise-registry"
     registry_check_before_synthesis: bool = True
 
+    # Multi-model routing
+    model_routes: dict[str, str] | None = None  # e.g. {"synthesis": "gpt-4o", "gap_detection": "gpt-4o-mini"}
+    auto_select_model: bool = False
+
     # Logging
     verbose: bool = True

@@ -84,12 +84,13 @@ def _check_imports(code: str, allowed: list[str]) -> list[str]:
 
 
 class SkillForge:
-    def __init__(self, model: str, sandbox: Sandbox, max_retries: int = 3, allowed_imports: list[str] | None = None, registry=None):
+    def __init__(self, model: str, sandbox: Sandbox, max_retries: int = 3, allowed_imports: list[str] | None = None, registry=None, llm_router=None):
         self.model = model
         self.sandbox = sandbox
         self.max_retries = max_retries
         self.allowed_imports = allowed_imports
         self.registry = registry  # SkillRegistry | None
+        self.llm_router = llm_router  # LLMRouter | None
 
     def detect_gaps(
         self,
@@ -115,9 +116,10 @@ class SkillForge:
         )
 
         _log("Detecting capability gaps...")
+        model = self.llm_router.get_model("gap_detection") if self.llm_router else self.model
         raw = llm_call_structured(
             [{"role": "user", "content": prompt}],
-            model=self.model,
+            model=model,
         )
 
         if isinstance(raw, list):
@@ -171,9 +173,10 @@ class SkillForge:
         ) + import_constraint
 
         _log(f"Synthesizing '{gap.suggested_name}'...")
+        model = self.llm_router.get_model("synthesis") if self.llm_router else self.model
         raw = llm_call_structured(
             [{"role": "user", "content": prompt}],
-            model=self.model,
+            model=model,
         )
 
         skill = Skill(
@@ -201,6 +204,8 @@ class SkillForge:
 
             _log(f"Testing in sandbox (attempt {attempt + 1}/{self.max_retries})...")
             result = self.sandbox.test_skill(skill)
+            if self.llm_router:
+                self.llm_router.record("synthesis", model, result.success)
             if result.success:
                 _log(f"All {result.total_passed} tests passed!")
                 return skill
@@ -227,9 +232,10 @@ class SkillForge:
             feedback=feedback,
         )
 
+        model = self.llm_router.get_model("refinement") if self.llm_router else self.model
         raw = llm_call_structured(
             [{"role": "user", "content": prompt}],
-            model=self.model,
+            model=model,
         )
 
         return Skill(
@@ -307,9 +313,10 @@ Return ONLY a JSON object:
             implementation=skill.implementation,
             existing_tests=skill.test_suite,
         )
+        model = self.llm_router.get_model("adversarial") if self.llm_router else self.model
         adv_tests = llm_call(
             [{"role": "user", "content": prompt}],
-            model=self.model,
+            model=model,
         )
         adv_tests = adv_tests.strip()
         if adv_tests.startswith("```"):
@@ -341,7 +348,8 @@ Return ONLY a JSON object:
             num_tests=num_tests,
         )
 
+        model = self.llm_router.get_model("test_generation") if self.llm_router else self.model
         return llm_call(
             [{"role": "user", "content": prompt}],
-            model=self.model,
+            model=model,
         )

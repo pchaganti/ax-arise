@@ -99,12 +99,21 @@ class ARISE:
                     prefix=self.config.registry_prefix,
                     region=self.config.aws_region,
                 )
+            llm_router = None
+            if self.config.model_routes:
+                from arise.llm_router import LLMRouter
+                llm_router = LLMRouter(
+                    routes=self.config.model_routes,
+                    default=self.config.model,
+                    auto_select=self.config.auto_select_model,
+                )
             self.forge = SkillForge(
                 model=self.config.model,
                 sandbox=self.sandbox,
                 max_retries=self.config.max_refinement_attempts,
                 allowed_imports=self.config.allowed_imports,
                 registry=registry,
+                llm_router=llm_router,
             )
             self.trigger = EvolutionTrigger(self.config)
 
