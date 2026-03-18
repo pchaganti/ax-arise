@@ -60,6 +60,12 @@ def parse_args() -> argparse.Namespace:
         default="benchmarks/results/",
         help="Directory for JSON results (default: benchmarks/results/)",
     )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        default=False,
+        help="Show agent traces (tool calls and results) for each episode",
+    )
     return parser.parse_args()
 
 
@@ -105,7 +111,9 @@ def create_agent_fn(model: str):
                 }
             )
 
-        for _ in range(10):  # max 10 tool-call rounds
+        trace: list[dict] = []
+
+        for round_num in range(10):  # max 10 tool-call rounds
             kwargs: dict[str, Any] = {
                 "model": model,
                 "messages": messages,
@@ -113,6 +121,8 @@ def create_agent_fn(model: str):
             }
             if openai_tools:
                 kwargs["tools"] = openai_tools
+            if model.startswith("bedrock/"):
+                kwargs["aws_region_name"] = "us-west-2"
 
             response = litellm.completion(**kwargs)
             choice = response.choices[0]
@@ -133,6 +143,14 @@ def create_agent_fn(model: str):
                             result = f"Error: {exc}"
                     else:
                         result = f"Unknown tool: {fn_name}"
+
+                    trace.append({
+                        "round": round_num + 1,
+                        "tool": fn_name,
+                        "args_preview": str(fn_args)[:200],
+                        "result_preview": str(result)[:200],
+                    })
+
                     messages.append(
                         {
                             "role": "tool",
@@ -141,8 +159,12 @@ def create_agent_fn(model: str):
                         }
                     )
             else:
-                return choice.message.content or ""
+                content = choice.message.content or ""
+                # Store trace on the function for retrieval
+                agent_fn._last_trace = trace
+                return content
 
+        agent_fn._last_trace = trace
         return "Max tool call rounds exceeded"
 
     return agent_fn
@@ -204,6 +226,7 @@ def run_episode(
     task_def: dict,
     agent,  # ARISE instance, NoEvolutionAgent, or FixedToolsAgent
     env,
+    agent_fn_ref=None,  # for trace capture
 ) -> dict:
     """Run a single benchmark episode and return a result dict."""
     global _current_task_check, _current_env
@@ -250,6 +273,8 @@ def run_episode(
         "reward": 1.0 if success else 0.0,
         "skills_count": skills_count,
         "latency_ms": elapsed_ms,
+        "outcome_preview": str(outcome)[:300] if outcome else "",
+        "trace": getattr(agent_fn_ref, "_last_trace", []) if hasattr(agent_fn_ref, "_last_trace") else [],
     }
 
 
@@ -296,7 +321,7 @@ def compute_summary(results: list[dict], agent) -> dict:
     }
 
 
-def print_episode_summary(episode: dict) -> None:
+def print_episode_summary(episode: dict, verbose: bool = False) -> None:
     status = "PASS" if episode["success"] else "FAIL"
     print(
         f"  [{status}] Episode {episode['episode']:3d} | "
@@ -305,6 +330,11 @@ def print_episode_summary(episode: dict) -> None:
         f"{episode['latency_ms']:5d}ms | "
         f"skills={episode['skills_count']}"
     )
+    if verbose and episode.get("trace"):
+        for step in episode["trace"]:
+            print(f"         round {step['round']}: {step['tool']}({step['args_preview'][:60]}) → {step['result_preview'][:80]}")
+        if episode.get("outcome_preview"):
+            print(f"         → {episode['outcome_preview'][:120]}")
 
 
 def print_final_summary(summary: dict, mode: str, model: str) -> None:
@@ -438,7 +468,7 @@ def main() -> None:
             reward_fn=benchmark_reward,
             config=ARISEConfig(
                 model=args.model,
-                failure_threshold=2,        # trigger evolution quickly during benchmarks
+                failure_threshold=5,        # evolve after 5 failures (fewer but better-informed cycles)
                 max_evolutions_per_hour=20,  # don't rate-limit during benchmark run
                 max_refinement_attempts=3,
                 allowed_imports=["json", "re", "base64", "urllib", "hashlib", "collections", "math"],
@@ -477,9 +507,9 @@ def http_get(url: str) -> str:
 
     results: list[dict] = []
     for i, task_def in enumerate(tasks):
-        episode = run_episode(i + 1, task_def, agent, env)
+        episode = run_episode(i + 1, task_def, agent, env, agent_fn_ref=agent_fn)
         results.append(episode)
-        print_episode_summary(episode)
+        print_episode_summary(episode, verbose=args.verbose)
 
     # Compute and display summary
     summary = compute_summary(results, agent)
