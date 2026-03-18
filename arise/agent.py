@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
 from arise.config import ARISEConfig
@@ -305,46 +306,39 @@ class ARISE:
                 if self.config.verbose:
                     print(f"[ARISE] Failed to patch '{name}': {e}")
 
-        for gap in new_gaps:
+        # Filter new_gaps to those that fit within max_library_size
+        active_count = len(self._skill_store.get_active_skills())
+        remaining_capacity = self.config.max_library_size - active_count
+        if remaining_capacity <= 0:
             if self.config.verbose:
-                print(f"[ARISE] Synthesizing tool: {gap.suggested_name}...")
+                print("[ARISE] Library at max capacity. Skipping new gap synthesis.")
+            new_gaps = []
+        else:
+            new_gaps = new_gaps[:remaining_capacity]
 
-            active_count = len(self._skill_store.get_active_skills())
-            if active_count >= self.config.max_library_size:
-                if self.config.verbose:
-                    print("[ARISE] Library at max capacity. Skipping.")
-                break
+        if new_gaps:
+            if self.config.verbose:
+                print(f"[ARISE] Synthesizing {len(new_gaps)} tools in parallel (max_workers=3)...")
 
-            try:
-                skill = self.forge.synthesize(gap, self._skill_store)
-                result = self.sandbox.test_skill(skill)
-
-                if result.success:
-                    # Adversarial validation before promotion
-                    adv_passed, adv_feedback = self.forge.adversarial_validate(skill)
-                    if not adv_passed:
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = {
+                    executor.submit(self._synthesize_gap, gap, failures): gap
+                    for gap in new_gaps
+                }
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is None:
+                        continue
+                    gap, skill, success = result
+                    if success:
+                        self.skill_library.add(skill)
+                        self.skill_library.promote(skill.id)
                         if self.config.verbose:
-                            print(f"[ARISE] Skill '{skill.name}' failed adversarial tests — refining...")
-                        skill = self.forge.refine(skill, adv_feedback)
-                        result = self.sandbox.test_skill(skill)
-                        if not result.success:
-                            if self.config.verbose:
-                                print(f"[ARISE] Skill '{skill.name}' failed after refinement — keeping in testing.")
-                            self.skill_library.add(skill)
-                            continue
-
-                    self.skill_library.add(skill)
-                    self.skill_library.promote(skill.id)
-                    if self.config.verbose:
-                        print(f"[ARISE] Skill '{skill.name}' created and promoted!")
-                else:
-                    self.skill_library.add(skill)
-                    if self.config.verbose:
-                        failed = [t.test_name for t in result.test_results if not t.passed]
-                        print(f"[ARISE] Skill '{skill.name}' added (testing) — {len(failed)} tests failing.")
-            except Exception as e:
-                if self.config.verbose:
-                    print(f"[ARISE] Failed to synthesize '{gap.suggested_name}': {e}")
+                            print(f"[ARISE] Skill '{skill.name}' created and promoted!")
+                    else:
+                        self.skill_library.add(skill)
+                        if self.config.verbose:
+                            print(f"[ARISE] Skill '{skill.name}' added (testing).")
 
         # Composition is disabled in v0.1 — it tends to create low-quality tools
         # TODO: re-enable with better heuristics in v0.2
@@ -425,6 +419,29 @@ class ARISE:
         if self.skill_library is None:
             raise RuntimeError("rollback() is not supported in distributed mode")
         self.skill_library.rollback(version)
+
+    def _synthesize_gap(self, gap, failures):
+        """Synthesize and validate a single gap. Returns (gap, skill, success) or None."""
+        try:
+            skill = self.forge.synthesize(gap, self._skill_store)
+            result = self.sandbox.test_skill(skill)
+            if result.success:
+                adv_passed, adv_feedback = self.forge.adversarial_validate(skill)
+                if not adv_passed:
+                    if self.config.verbose:
+                        print(f"[ARISE] Skill '{skill.name}' failed adversarial tests — refining...")
+                    skill = self.forge.refine(skill, adv_feedback)
+                    result = self.sandbox.test_skill(skill)
+                    if not result.success:
+                        if self.config.verbose:
+                            print(f"[ARISE] Skill '{skill.name}' failed after refinement — keeping in testing.")
+                        return (gap, skill, False)
+                return (gap, skill, True)
+            return (gap, skill, False)
+        except Exception as e:
+            if self.config.verbose:
+                print(f"[ARISE] Failed: {gap.suggested_name}: {e}")
+            return None
 
     def _wrap_tool_spec(self, tool_spec: ToolSpec, trajectory: Trajectory) -> ToolSpec:
         skill_id = tool_spec.skill_id

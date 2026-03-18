@@ -3,7 +3,61 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
+
+
+class CostTracker:
+    """Thread-safe LLM cost tracker."""
+
+    # Approximate costs per 1M tokens (as of 2024)
+    MODEL_COSTS = {
+        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+        "claude-sonnet": {"input": 3.00, "output": 15.00},
+    }
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+        self.total_calls = 0
+        self.total_cost_usd = 0.0
+
+    def record(self, model: str, input_tokens: int, output_tokens: int):
+        with self._lock:
+            self.total_input_tokens += input_tokens
+            self.total_output_tokens += output_tokens
+            self.total_calls += 1
+            # Estimate cost
+            costs = self._get_costs(model)
+            self.total_cost_usd += (input_tokens * costs["input"] + output_tokens * costs["output"]) / 1_000_000
+
+    def _get_costs(self, model: str) -> dict:
+        for key, costs in self.MODEL_COSTS.items():
+            if key in model.lower():
+                return costs
+        return {"input": 1.0, "output": 3.0}  # conservative default
+
+    def summary(self) -> dict:
+        with self._lock:
+            return {
+                "total_calls": self.total_calls,
+                "total_input_tokens": self.total_input_tokens,
+                "total_output_tokens": self.total_output_tokens,
+                "total_cost_usd": round(self.total_cost_usd, 4),
+            }
+
+    def reset(self):
+        with self._lock:
+            self.total_input_tokens = 0
+            self.total_output_tokens = 0
+            self.total_calls = 0
+            self.total_cost_usd = 0.0
+
+
+# Module-level singleton
+cost_tracker = CostTracker()
 
 
 def llm_call(
@@ -42,6 +96,9 @@ def _llm_call_once(
             max_tokens=max_tokens,
             timeout=120,
         )
+        # Record usage
+        if hasattr(response, 'usage') and response.usage:
+            cost_tracker.record(model, response.usage.prompt_tokens or 0, response.usage.completion_tokens or 0)
         return response.choices[0].message.content
     except ImportError:
         pass
@@ -108,6 +165,10 @@ def _raw_openai_call(
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             data = json.loads(resp.read().decode())
+        # Record usage
+        usage = data.get("usage", {})
+        if usage:
+            cost_tracker.record(model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
         return data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as e:
         body = e.read().decode() if e.fp else ""

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from arise.config import ARISEConfig
@@ -145,6 +146,25 @@ class ARISEWorker:
                 print(f"[ARISE Worker] Evolution triggered with {len(self._trajectory_buffer)} trajectories")
             self._evolve()
 
+    def _synthesize_gap(self, gap, failures):
+        """Synthesize and validate a single gap. Returns (gap, skill, success) or None."""
+        try:
+            skill = self._forge.synthesize(gap, self._skill_store)
+            result = self._sandbox.test_skill(skill)
+            if result.success:
+                adv_passed, adv_feedback = self._forge.adversarial_validate(skill)
+                if not adv_passed:
+                    skill = self._forge.refine(skill, adv_feedback)
+                    result = self._sandbox.test_skill(skill)
+                    if not result.success:
+                        return (gap, skill, False)
+                return (gap, skill, True)
+            return (gap, skill, False)
+        except Exception as e:
+            if self.config.verbose:
+                print(f"[ARISE Worker] Failed: {gap.suggested_name}: {e}")
+            return None
+
     def _evolve(self) -> None:
         """Run evolution cycle against S3 skill store."""
         failures = [t for t in self._trajectory_buffer if t.reward < 0.5]
@@ -158,40 +178,39 @@ class ARISEWorker:
         active_names = {s.name for s in self._skill_store.get_active_skills()}
         gaps = [g for g in gaps if g.suggested_name not in active_names]
 
-        for gap in gaps:
+        # Enforce max_library_size capacity
+        active_count = len(self._skill_store.get_active_skills())
+        remaining_capacity = self.config.max_library_size - active_count
+        if remaining_capacity <= 0:
             if self.config.verbose:
-                print(f"[ARISE Worker] Synthesizing: {gap.suggested_name}...")
+                print("[ARISE Worker] Library at max capacity.")
+            self._trajectory_buffer.clear()
+            return
+        gaps = gaps[:remaining_capacity]
 
-            active_count = len(self._skill_store.get_active_skills())
-            if active_count >= self.config.max_library_size:
-                if self.config.verbose:
-                    print("[ARISE Worker] Library at max capacity.")
-                break
+        if gaps:
+            if self.config.verbose:
+                print(f"[ARISE Worker] Synthesizing {len(gaps)} tools in parallel (max_workers=3)...")
 
-            try:
-                skill = self._forge.synthesize(gap, self._skill_store)
-                result = self._sandbox.test_skill(skill)
-
-                if result.success:
-                    adv_passed, adv_feedback = self._forge.adversarial_validate(skill)
-                    if not adv_passed:
-                        skill = self._forge.refine(skill, adv_feedback)
-                        result = self._sandbox.test_skill(skill)
-                        if not result.success:
-                            self._skill_store.add(skill)
-                            continue
-
-                    self._skill_store.add(skill)
-                    self._skill_store.promote(skill.id)
-                    if self.config.verbose:
-                        print(f"[ARISE Worker] Skill '{skill.name}' promoted to S3!")
-                else:
-                    self._skill_store.add(skill)
-                    if self.config.verbose:
-                        print(f"[ARISE Worker] Skill '{skill.name}' added (testing).")
-            except Exception as e:
-                if self.config.verbose:
-                    print(f"[ARISE Worker] Failed: {gap.suggested_name}: {e}")
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = {
+                    executor.submit(self._synthesize_gap, gap, failures): gap
+                    for gap in gaps
+                }
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is None:
+                        continue
+                    gap, skill, success = result
+                    if success:
+                        self._skill_store.add(skill)
+                        self._skill_store.promote(skill.id)
+                        if self.config.verbose:
+                            print(f"[ARISE Worker] Skill '{skill.name}' promoted to S3!")
+                    else:
+                        self._skill_store.add(skill)
+                        if self.config.verbose:
+                            print(f"[ARISE Worker] Skill '{skill.name}' added (testing).")
 
         # Clear buffer after evolution
         self._trajectory_buffer.clear()

@@ -9,6 +9,7 @@ from arise.types import Skill, SkillStatus, SkillOrigin, ToolSpec, Trajectory, S
 from arise.registry import SkillRegistry
 from arise.llm_router import LLMRouter
 from arise.rewards.learned import LearnedReward
+from arise.llm import cost_tracker
 
 __all__ = [
     "ARISE",
@@ -30,6 +31,7 @@ __all__ = [
     "SkillRegistry",
     "LLMRouter",
     "LearnedReward",
+    "cost_tracker",
 ]
 
 __version__ = "0.1.1"
