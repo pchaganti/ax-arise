@@ -38,11 +38,13 @@ plt.rcParams.update({
 # we pass it explicitly in each savefig call instead.
 _SAVEFIG_KWARGS: dict[str, Any] = {"bbox_inches": "tight"}
 
-# Mode → color mapping
+# Mode → color mapping (supports both hyphen and underscore variants)
 MODE_COLORS: dict[str, str] = {
-    "arise": "#1f77b4",        # blue
-    "no-evolution": "#d62728", # red
-    "fixed-tools": "#2ca02c",  # green
+    "arise": "#1f77b4",          # blue
+    "no-evolution": "#d62728",   # red
+    "no_evolution": "#d62728",   # red
+    "fixed-tools": "#2ca02c",    # green
+    "fixed_tools": "#2ca02c",    # green
 }
 
 PHASE_BOUNDARIES = [15, 30, 45]
@@ -58,8 +60,25 @@ def load_result(path: str | Path) -> dict[str, Any]:
         return json.load(fh)
 
 
+def _short_model_name(model: str) -> str:
+    """Shorten model names for plot labels."""
+    if "claude-sonnet" in model.lower():
+        return "Claude Sonnet"
+    if "gpt-4o-mini" in model.lower():
+        return "GPT-4o-mini"
+    if "gpt-4o" in model.lower():
+        return "GPT-4o"
+    return model
+
+
+def _short_mode(mode: str) -> str:
+    return mode.replace("_", "-").replace("no-evolution", "no tools").replace("fixed-tools", "fixed tools")
+
+
 def label_for(result: dict[str, Any]) -> str:
-    return f"{result['model']} ({result['mode']})"
+    model = _short_model_name(result.get("model", "unknown"))
+    mode = _short_mode(result.get("mode", "arise"))
+    return f"{model} ({mode})"
 
 
 # ---------------------------------------------------------------------------
@@ -130,19 +149,35 @@ def _add_phase_boundaries(ax: plt.Axes, ymax: float = 1.0) -> None:
 def plot_learning_curve(results: list[dict[str, Any]], output_dir: Path) -> None:
     fig, ax = plt.subplots()
 
+    # Use different line styles for different models
+    model_styles = {}
+    style_cycle = ["-", "--", ":", "-."]
+    style_idx = 0
+
     for result in results:
         mode = result.get("mode", "arise")
+        model = result.get("model", "unknown")
         color = MODE_COLORS.get(mode, "#7f7f7f")
         label = label_for(result)
         xs, rates = rolling_success(result.get("episodes", []))
-        ax.plot(xs, rates, label=label, color=color, linewidth=1.8)
+
+        if model not in model_styles:
+            model_styles[model] = style_cycle[style_idx % len(style_cycle)]
+            style_idx += 1
+        linestyle = model_styles[model]
+
+        ax.plot(xs, rates, label=label, color=color, linewidth=1.8, linestyle=linestyle)
 
     _add_phase_boundaries(ax)
+
+    # Add Phase 1 label at the start
+    ax.text(1, 0.97 * 1.05, "Phase 1", fontsize=8, color="gray", va="top")
+
     ax.set_title("Agent Success Rate Over Episodes")
     ax.set_xlabel("Episode")
     ax.set_ylabel("Success Rate")
     ax.set_ylim(0, 1.05)
-    ax.legend(loc="upper left")
+    ax.legend(loc="lower right", fontsize=9)
     ax.grid(axis="y", alpha=0.3)
 
     out = output_dir / "learning_curve.pdf"
@@ -218,7 +253,7 @@ def plot_model_comparison(results: list[dict[str, Any]], output_dir: Path) -> No
     color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for i, result in enumerate(arise_results):
         color = color_cycle[i % len(color_cycle)]
-        label = result.get("model", "unknown")
+        label = _short_model_name(result.get("model", "unknown"))
         xs, rates = rolling_success(result.get("episodes", []))
         ax.plot(xs, rates, label=label, color=color, linewidth=1.8)
 
@@ -283,8 +318,8 @@ TableRow = tuple[str, str, float, float, float, float, float, int]
 def build_rows(results: list[dict[str, Any]]) -> list[TableRow]:
     rows: list[TableRow] = []
     for result in results:
-        model = result.get("model", "unknown")
-        mode = result.get("mode", "unknown")
+        model = _short_model_name(result.get("model", "unknown"))
+        mode = _short_mode(result.get("mode", "unknown"))
         psr = phase_success_rates(result)
         p1 = psr.get("1", 0.0)
         p2 = psr.get("2", 0.0)
