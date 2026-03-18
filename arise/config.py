@@ -43,11 +43,6 @@ class ARISEConfig:
     model_routes: dict[str, str] | None = None  # e.g. {"synthesis": "gpt-4o", "gap_detection": "gpt-4o-mini"}
     auto_select_model: bool = False
 
-    # Tool injection control
-    min_tools_for_injection: int = 0  # only inject tools when library has >= N tools (0 = always inject)
-    tool_success_threshold: float = 0.0  # suppress tool injection when recent success rate > this (0.0 = always inject)
-    tool_suppression_window: int = 5  # number of recent episodes to check for suppression
-
     # Parallel synthesis
     max_synthesis_workers: int = 3  # max concurrent tool synthesis threads
 
