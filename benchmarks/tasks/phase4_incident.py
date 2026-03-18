@@ -19,7 +19,6 @@ def _error_counts_per_service(logs):
 
 def make_phase4_tasks(env):
     """Generate 15 Phase 4 (Incident Response) tasks."""
-    log_path = env.log_file_path
     port = env.metrics_port
     base_url = f"http://localhost:{port}"
     logs = env.logs
@@ -31,6 +30,12 @@ def make_phase4_tasks(env):
     encoding_hint = (
         "The metrics API returns base64-encoded data. Decode the base64 string to get "
         "format: ACME_METRICS|service|timestamp|json. Parse the JSON for metrics."
+    )
+
+    # Embed log data inline so the agent can parse it from the prompt
+    log_all = "\n".join(logs)
+    log_format_hint = (
+        "The format is [ACME:severity:service:unix_timestamp] message | ctx={json}."
     )
 
     # Pre-compute
@@ -91,10 +96,9 @@ def make_phase4_tasks(env):
         "id": "incident-01",
         "phase": 4,
         "task": (
-            f"INCIDENT: Payments service is alerting. Check the logs at {log_path} "
-            f"for ERROR entries for the 'payments' service. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
-            f"How many ERROR entries are there?"
+            f"INCIDENT: Payments service is alerting. Here are the logs. "
+            f"{log_format_hint}\n\n{log_all}\n\n"
+            f"How many ERROR entries are there for the 'payments' service?"
         ),
         "check": lambda output, env, expected=payments_errors: str(expected) in output,
         "difficulty": "easy",
@@ -131,8 +135,7 @@ def make_phase4_tasks(env):
         "phase": 4,
         "task": (
             f"INCIDENT: Check how many total errors (ERROR + FATAL) we have across "
-            f"all services in the logs at {log_path}. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"all services. Here are the logs. {log_format_hint}\n\n{log_all}\n\n"
             f"Return the total count."
         ),
         "check": lambda output, env, expected=total_errors: str(expected) in output,
@@ -157,9 +160,10 @@ def make_phase4_tasks(env):
         "id": "incident-06",
         "phase": 4,
         "task": (
-            f"INCIDENT: Payments has errors. Check BOTH the logs at {log_path} for "
-            f"ERROR/FATAL entries for 'payments', and the metrics at "
-            f"{base_url}/metrics/payments. {encoding_hint} "
+            f"INCIDENT: Payments has errors. Check BOTH the logs below for "
+            f"ERROR/FATAL entries for 'payments', and the metrics API at "
+            f"{base_url}/metrics/payments. {encoding_hint}\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}\n\n"
             f"Are errors reflected in both the logs and the metrics? "
             f"Report the error count from logs and the error_rate from metrics."
         ),
@@ -174,8 +178,9 @@ def make_phase4_tasks(env):
         "phase": 4,
         "task": (
             f"INCIDENT: Gateway is slow. Check metrics at {base_url}/metrics/gateway "
-            f"for p99 latency, and check logs at {log_path} for WARN entries from "
-            f"the 'gateway' service. {encoding_hint} "
+            f"for p99 latency, and check the logs below for WARN entries from "
+            f"the 'gateway' service. {encoding_hint}\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}\n\n"
             f"Report the p99 latency and the number of WARN entries."
         ),
         "check": lambda output, env, p99=gateway_p99, warns=gateway_warns: (
@@ -203,9 +208,10 @@ def make_phase4_tasks(env):
         "id": "incident-09",
         "phase": 4,
         "task": (
-            f"INCIDENT: Multiple services have errors. Check the logs at {log_path} "
+            f"INCIDENT: Multiple services have errors. Check the logs below "
             f"for error counts (ERROR+FATAL) per service and the metrics API at "
-            f"{base_url} for error rates. {encoding_hint} "
+            f"{base_url} for error rates. {encoding_hint}\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}\n\n"
             f"Which service is the worst overall? Consider both log errors and metric error rates."
         ),
         "check": lambda output, env, w1=worst_by_logs, w2=worst_by_metrics: (
@@ -244,7 +250,7 @@ def make_phase4_tasks(env):
         "phase": 4,
         "task": (
             f"INCIDENT: Service payments is down. Perform a full investigation:\n"
-            f"1. Check logs at {log_path} for ERROR/FATAL entries for payments\n"
+            f"1. Check the logs below for ERROR/FATAL entries for payments\n"
             f"2. Check metrics at {base_url}/metrics/payments for degradation\n"
             f"3. Check the payments config below for any issues\n\n"
             + (
@@ -252,7 +258,8 @@ def make_phase4_tasks(env):
                 if 'payments.acme' in configs
                 else "No payments config available.\n\n"
             )
-            + f"{encoding_hint}\n"
+            + f"{encoding_hint}\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}\n\n"
             f"What is the likely root cause?"
         ),
         "check": lambda output, env: "payments" in output.lower() and (
@@ -268,7 +275,8 @@ def make_phase4_tasks(env):
             f"INCIDENT: We're seeing increased latency across the board. "
             f"Check all services' metrics at {base_url} (list from /services, "
             f"then /metrics/{{service}} for each). {encoding_hint}\n"
-            f"Also check the logs at {log_path} for correlated errors. "
+            f"Also check the logs below for correlated errors.\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}\n\n"
             f"Identify the bottleneck service (highest p99 latency)."
         ),
         "check": lambda output, env, expected=max(metrics, key=lambda s: metrics[s]["latency_p99"]): (
@@ -282,14 +290,15 @@ def make_phase4_tasks(env):
         "phase": 4,
         "task": (
             f"INCIDENT: Generate an incident report covering:\n"
-            f"1. Affected services (from logs at {log_path} - services with ERROR/FATAL)\n"
+            f"1. Affected services (from the logs below - services with ERROR/FATAL)\n"
             f"2. Severity assessment (from metrics at {base_url} - error rates)\n"
             f"3. Current config state\n\n"
             + "\n\n".join(
                 f"Config ({fn}):\n```\n{text}```"
                 for fn, text in configs.items()
             )
-            + f"\n\n{encoding_hint}"
+            + f"\n\n{encoding_hint}\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}"
         ),
         "check": lambda output, env, expected=error_counts: (
             sum(1 for svc in expected if svc in output) >= min(2, len(expected))
@@ -302,14 +311,15 @@ def make_phase4_tasks(env):
         "phase": 4,
         "task": (
             f"INCIDENT: Perform a full health check for each service:\n"
-            f"1. Check logs at {log_path} for errors (ERROR+FATAL count)\n"
+            f"1. Check the logs below for errors (ERROR+FATAL count)\n"
             f"2. Check metrics at {base_url}/metrics/{{service}} for performance\n"
             f"3. Check config for correctness\n\n"
             + "\n\n".join(
                 f"Config ({fn}):\n```\n{text}```"
                 for fn, text in configs.items()
             )
-            + f"\n\n{encoding_hint}\n"
+            + f"\n\n{encoding_hint}\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}\n\n"
             f"For each service, report: error count (logs), error rate (metrics), "
             f"and config status."
         ),
@@ -324,14 +334,15 @@ def make_phase4_tasks(env):
         "phase": 4,
         "task": (
             f"INCIDENT TRIAGE: Rank all services by urgency using:\n"
-            f"1. Error counts from logs at {log_path}\n"
+            f"1. Error counts from the logs below\n"
             f"2. Error rates from metrics at {base_url}\n"
             f"3. Config validation\n\n"
             + "\n\n".join(
                 f"Config ({fn}):\n```\n{text}```"
                 for fn, text in configs.items()
             )
-            + f"\n\n{encoding_hint}\n"
+            + f"\n\n{encoding_hint}\n\n"
+            f"Logs ({log_format_hint}):\n{log_all}\n\n"
             f"Return a ranked list from most urgent to least urgent, "
             f"with justification for each."
         ),

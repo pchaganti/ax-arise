@@ -404,21 +404,71 @@ def main() -> None:
 
     elif args.fixed_tools:
         from benchmarks.baselines.fixed_tools import get_fixed_tools
+        from arise.types import ToolSpec, _extract_parameters
+
         tools = get_fixed_tools()
+
+        # Add http_get to fixed tools if not already present
+        if not any(t.name == "http_get" for t in tools):
+            def _http_get(url: str) -> str:
+                """Make an HTTP GET request and return the response body and headers as a JSON string."""
+                import urllib.request
+                import json as _json
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    body = resp.read().decode()
+                    headers = dict(resp.headers)
+                    return _json.dumps({"status": resp.status, "headers": headers, "body": body})
+
+            tools.append(ToolSpec(
+                name="http_get",
+                description="Make an HTTP GET request. Returns JSON with status, headers, and body.",
+                parameters=_extract_parameters(_http_get),
+                fn=_http_get,
+            ))
+
         agent = FixedToolsAgent(agent_fn, tools)
 
     else:
+        from arise.types import Skill, SkillOrigin, SkillStatus
+
         # Full ARISE with evolution enabled
         agent = ARISE(
             agent_fn=agent_fn,
             reward_fn=benchmark_reward,
             config=ARISEConfig(
                 model=args.model,
-                failure_threshold=3,        # trigger evolution quickly during benchmarks
+                failure_threshold=2,        # trigger evolution quickly during benchmarks
                 max_evolutions_per_hour=20,  # don't rate-limit during benchmark run
+                max_refinement_attempts=3,
+                allowed_imports=["json", "re", "base64", "urllib", "hashlib", "collections", "math"],
                 verbose=True,
             ),
         )
+
+        # Add a seed http_get tool so ARISE has basic HTTP capability
+        http_get_impl = '''
+def http_get(url: str) -> str:
+    """Make an HTTP GET request and return the response body and headers as a JSON string."""
+    import urllib.request
+    import json
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode()
+        headers = dict(resp.headers)
+        return json.dumps({"status": resp.status, "headers": headers, "body": body})
+'''
+
+        seed_skill = Skill(
+            name="http_get",
+            description="Make an HTTP GET request. Returns JSON with status, headers, and body.",
+            implementation=http_get_impl,
+            test_suite="def test_http_get():\n    pass",
+            origin=SkillOrigin.MANUAL,
+            status=SkillStatus.ACTIVE,
+        )
+        agent.skill_library.add(seed_skill)
+        agent.skill_library.promote(seed_skill.id)
 
     # Select task set
     tasks = get_quick_tasks(env) if args.quick else get_all_tasks(env)

@@ -135,7 +135,6 @@ def _ctx_exceeds_threshold(logs):
 
 def make_phase1_tasks(env):
     """Generate 15 Phase 1 (Log Analysis) tasks."""
-    log_path = env.log_file_path
     logs = env.logs
 
     # Pre-compute ground truth
@@ -154,6 +153,14 @@ def make_phase1_tasks(env):
     top3 = _top3_services_by_errors(logs)
     threshold_entries = _ctx_exceeds_threshold(logs)
 
+    # Embed log data inline so the agent can parse it from the prompt
+    # Easy tasks get first 100 lines; medium/hard get all lines
+    log_sample = "\n".join(logs[:100])
+    log_all = "\n".join(logs)
+    log_format_hint = (
+        "The format is [ACME:severity:service:unix_timestamp] message | ctx={json}."
+    )
+
     tasks = []
 
     # --- Easy (1-5) ---
@@ -162,9 +169,9 @@ def make_phase1_tasks(env):
         "id": "log-01",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and count how many ERROR entries "
-            f"belong to the 'payments' service. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_sample}\n\n"
+            f"How many ERROR entries are there for the 'payments' service? "
             f"Return just the count."
         ),
         "check": lambda output, env, expected=payments_errors: str(expected) in output,
@@ -175,9 +182,9 @@ def make_phase1_tasks(env):
         "id": "log-02",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and count how many ERROR entries "
-            f"belong to the 'gateway' service. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_sample}\n\n"
+            f"How many ERROR entries are there for the 'gateway' service? "
             f"Return just the count."
         ),
         "check": lambda output, env, expected=gateway_errors: str(expected) in output,
@@ -188,9 +195,9 @@ def make_phase1_tasks(env):
         "id": "log-03",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and list all unique services that have "
-            f"at least one FATAL entry. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_sample}\n\n"
+            f"List all unique services that have at least one FATAL entry. "
             f"Return the service names."
         ),
         "check": lambda output, env, expected=fatal_services: all(
@@ -203,7 +210,9 @@ def make_phase1_tasks(env):
         "id": "log-04",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and count the total number of log entries. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_sample}\n\n"
+            f"Count the total number of log entries above. "
             f"Each line is one entry. Return just the count."
         ),
         "check": lambda output, env, expected=total_entries: str(expected) in output,
@@ -214,9 +223,9 @@ def make_phase1_tasks(env):
         "id": "log-05",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and find the service with the most "
-            f"error entries (ERROR + FATAL combined). Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_sample}\n\n"
+            f"Find the service with the most error entries (ERROR + FATAL combined). "
             f"Return the service name."
         ),
         "check": lambda output, env, expected=worst_service: expected in output,
@@ -229,9 +238,9 @@ def make_phase1_tasks(env):
         "id": "log-06",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and count the number of error entries "
-            f"(ERROR + FATAL) per service. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Count the number of error entries (ERROR + FATAL) per service. "
             f"Return each service name with its error count."
         ),
         "check": lambda output, env, expected=error_counts: all(
@@ -245,9 +254,9 @@ def make_phase1_tasks(env):
         "id": "log-07",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and extract all unique user_id values "
-            f"from the ctx JSON field of ERROR entries. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Extract all unique user_id values from the ctx JSON field of ERROR entries. "
             f"Return the list of user_ids."
         ),
         "check": lambda output, env, expected=user_ids: (
@@ -260,9 +269,9 @@ def make_phase1_tasks(env):
         "id": "log-08",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and find all ERROR entries in the last "
-            f"6 hours of the log timespan. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Find all ERROR entries in the last 6 hours of the log timespan. "
             f"Return the count of such entries."
         ),
         "check": lambda output, env, expected=len(last_6h_errors): str(expected) in output,
@@ -273,9 +282,9 @@ def make_phase1_tasks(env):
         "id": "log-09",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and count entries per severity level "
-            f"(DEBUG, INFO, WARN, ERROR, FATAL). Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Count entries per severity level (DEBUG, INFO, WARN, ERROR, FATAL). "
             f"Return each severity with its count."
         ),
         "check": lambda output, env, expected=sev_counts: all(
@@ -289,9 +298,9 @@ def make_phase1_tasks(env):
         "id": "log-10",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and find the hour (in unix timestamp) "
-            f"with the most errors (ERROR + FATAL). Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Find the hour (in unix timestamp) with the most errors (ERROR + FATAL). "
             f"Return the hour's start timestamp and error count."
         ),
         "check": lambda output, env, expected=peak_hour: str(expected) in output if expected else True,
@@ -304,10 +313,10 @@ def make_phase1_tasks(env):
         "id": "log-11",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and for each service, compute the "
-            f"error rate (count of ERROR+FATAL entries divided by total entries for "
-            f"that service). Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"For each service, compute the error rate (count of ERROR+FATAL entries "
+            f"divided by total entries for that service). "
             f"Return each service with its error rate as a decimal."
         ),
         "check": lambda output, env, expected=error_rates: all(
@@ -320,9 +329,9 @@ def make_phase1_tasks(env):
         "id": "log-12",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and correlate which services have "
-            f"errors (ERROR or FATAL) in the same hour. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Correlate which services have errors (ERROR or FATAL) in the same hour. "
             f"Return the hours where multiple services had errors and which services were affected."
         ),
         "check": lambda output, env, expected=correlated: (
@@ -338,10 +347,10 @@ def make_phase1_tasks(env):
         "id": "log-13",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and generate a summary of the top 3 "
-            f"services by error count (ERROR + FATAL). For each, include the error "
-            f"count and the unique error messages. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}."
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Generate a summary of the top 3 services by error count (ERROR + FATAL). "
+            f"For each, include the error count and the unique error messages."
         ),
         "check": lambda output, env, expected=top3: all(
             svc in output for svc in expected
@@ -353,9 +362,10 @@ def make_phase1_tasks(env):
         "id": "log-14",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and find all entries where a ctx field "
-            f"exceeds a threshold: amount > 500 or duration_ms > 1000. Log format is: "
-            f"[ACME:severity:service:unix_timestamp] message | ctx={{json}}. "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Find all entries where a ctx field exceeds a threshold: "
+            f"amount > 500 or duration_ms > 1000. "
             f"Return the count of such entries."
         ),
         "check": lambda output, env, expected=len(threshold_entries): str(expected) in output,
@@ -366,11 +376,12 @@ def make_phase1_tasks(env):
         "id": "log-15",
         "phase": 1,
         "task": (
-            f"Read the log file at {log_path} and generate a full error report: "
+            f"Here is an AcmeCorp log file. {log_format_hint}\n\n"
+            f"{log_all}\n\n"
+            f"Generate a full error report: "
             f"(1) error counts by service (ERROR+FATAL), "
             f"(2) top error messages across all services, "
-            f"(3) time distribution of errors by hour. "
-            f"Log format is: [ACME:severity:service:unix_timestamp] message | ctx={{json}}."
+            f"(3) time distribution of errors by hour."
         ),
         "check": lambda output, env, expected=error_counts: (
             all(svc in output for svc in expected)
