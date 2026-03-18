@@ -133,6 +133,18 @@ class ARISE:
         self._episode_count += 1
         tool_specs = self._skill_store.get_tool_specs()
 
+        # Smart tool suppression: skip tool injection if agent is doing well without them
+        if self.config.tool_success_threshold > 0 and self.trajectory_store is not None:
+            recent = self.trajectory_store.get_recent(self.config.tool_suppression_window)
+            if len(recent) >= self.config.tool_suppression_window:
+                recent_success_rate = sum(1 for t in recent if t.reward >= 0.5) / len(recent)
+                if recent_success_rate >= self.config.tool_success_threshold:
+                    tool_specs = []  # suppress tools, let agent reason directly
+
+        # Min tools threshold: don't inject if library is too small to be useful
+        if self.config.min_tools_for_injection > 0 and len(tool_specs) < self.config.min_tools_for_injection:
+            tool_specs = []
+
         # Replace tool specs involved in A/B tests with selected variant
         ab_variants: dict[str, Skill] = {}  # skill_name -> selected Skill for this episode
         for name, ab in self._ab_tests.items():
