@@ -184,7 +184,47 @@ For GPT-4o-mini, the no-evolution baseline outperformed ARISE on Phase 1 (33% vs
 
 This disparity highlights an interesting dynamic: weaker models need more evolved tools, but are also worse at using them. Stronger models need fewer tools but use them more effectively.
 
-### 4.5 Cost and Timing
+### 4.5 Tool Quality Analysis
+
+We examine the tools ARISE synthesized during the GPT-4o-mini run (21 tools total, 14 promoted).
+
+**Promoted tools by domain:**
+
+| Domain | Tools promoted | Examples |
+|--------|---------------|----------|
+| Log parsing | 6 | `count_error_entries_per_service`, `filter_entries_by_time_range`, `aggregate_errors_by_hour` |
+| Metrics | 5 | `decode_base64_metrics`, `compare_metrics`, `aggregate_metrics_summary` |
+| General | 3 | `calculate_total_metric`, `calculate_error_rate`, `compute_efficiency` |
+
+**Failed tools (7 stayed in testing):**
+
+| Tool | Failure reason |
+|------|---------------|
+| `fetch_and_decode_metrics` | Sandbox failure 3/3 — couldn't correctly implement the proprietary base64 decoding in a self-contained function |
+| `correlate_service_errors_by_hour` | Sandbox failure — cross-service time correlation logic too complex for synthesis |
+| `count_log_severity` | Adversarial testing caught edge case with empty log input |
+| `compute_error_rate` | Adversarial testing caught division-by-zero on services with no entries |
+| `aggregate_entries_by_service_and_severity` | Sandbox failure — output format didn't match test expectations |
+
+The safety model caught real bugs: division-by-zero, empty input handling, and format mismatches. 33% of synthesized tools were rejected — a meaningful rejection rate that validates the multi-stage validation approach.
+
+**Import restriction enforcement:** One tool attempted to import `difflib` (not in the allowed list). The static import checker caught this and forced a reimplementation using basic string comparison.
+
+### 4.6 Error Analysis
+
+We categorize the 13 failures in the Claude Sonnet ARISE run (78% success, 47/60 passed):
+
+| Category | Count | Tasks | Explanation |
+|----------|-------|-------|-------------|
+| Log parsing errors | 6 | log-01,03,04,09,12,14 | Claude parsed the custom format but produced output that didn't match the check function's expected format (e.g., returning "2 errors" instead of just "2") |
+| Multi-service metrics | 4 | metrics-07,10,14,15 | Tasks requiring multiple API calls + aggregation across all services; Claude sometimes missed a service or computed averages incorrectly |
+| Complex incidents | 3 | incident-06,07,15 | Multi-domain tasks requiring log + metrics + config composition; Claude timed out on the multi-step reasoning |
+
+**Key insight:** ARISE's improvement for Claude is **entirely concentrated in Phase 2** (+9 tasks over no-evolution). For Phases 1, 3, and 4, Claude's results are identical with and without ARISE — the seed `http_get` tool was the only difference that mattered. This suggests that for strong models, ARISE's primary value is providing I/O capabilities (HTTP, file access) rather than computation tools.
+
+For GPT-4o-mini, the pattern is different: ARISE improved Phase 2 by +9 tasks (same as Claude) but *decreased* Phases 1 and 4 performance due to tool-calling overhead. The 21 evolved computational tools (log parsing, aggregation) added complexity that the weaker model couldn't manage effectively.
+
+### 4.7 Cost and Timing
 
 | Condition | Duration | Estimated cost |
 |-----------|----------|---------------|

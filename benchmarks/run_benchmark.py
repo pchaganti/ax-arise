@@ -38,6 +38,12 @@ def parse_args() -> argparse.Namespace:
         help="RNG seed for deterministic environment generation (default: 42)",
     )
     parser.add_argument(
+        "--domain",
+        choices=["acmecorp", "datacorp"],
+        default="acmecorp",
+        help="Benchmark domain (default: acmecorp)",
+    )
+    parser.add_argument(
         "--no-evolution",
         action="store_true",
         default=False,
@@ -411,16 +417,39 @@ def main() -> None:
         sys.path.insert(0, project_root)
 
     from arise import ARISE, ARISEConfig
-    from benchmarks.acmecorp.fixtures import generate
-    from benchmarks.acmecorp.metrics import create_metrics_app, start_metrics_server, stop_metrics_server
-    from benchmarks.tasks import get_all_tasks, get_quick_tasks
 
-    print(f"[benchmark] Generating AcmeCorp environment (seed={args.seed})...")
-    env = generate(seed=args.seed)
+    server_thread = None
 
-    print(f"[benchmark] Starting metrics mock server on port {env.metrics_port}...")
-    app = create_metrics_app(env.metrics_data)
-    server_thread = start_metrics_server(app, port=env.metrics_port)
+    if args.domain == "datacorp":
+        from benchmarks.datacorp.fixtures import generate
+        from benchmarks.datacorp.validation_api import start_validation_server, stop_validation_server
+        from benchmarks.tasks.datacorp_tasks import make_datacorp_tasks
+
+        print(f"[benchmark] Generating DataCorp environment (seed={args.seed})...")
+        env = generate(seed=args.seed)
+
+        print(f"[benchmark] Starting validation mock server on port {env.validation_port}...")
+        server_thread = start_validation_server(port=env.validation_port)
+
+        def _get_tasks(env, quick):
+            tasks = make_datacorp_tasks(env)
+            if quick:
+                return [t for t in tasks if t["difficulty"] == "easy"]
+            return tasks
+    else:
+        from benchmarks.acmecorp.fixtures import generate
+        from benchmarks.acmecorp.metrics import create_metrics_app, start_metrics_server, stop_metrics_server
+        from benchmarks.tasks import get_all_tasks, get_quick_tasks
+
+        print(f"[benchmark] Generating AcmeCorp environment (seed={args.seed})...")
+        env = generate(seed=args.seed)
+
+        print(f"[benchmark] Starting metrics mock server on port {env.metrics_port}...")
+        app = create_metrics_app(env.metrics_data)
+        server_thread = start_metrics_server(app, port=env.metrics_port)
+
+        def _get_tasks(env, quick):
+            return get_quick_tasks(env) if quick else get_all_tasks(env)
 
     # Build the core LLM agent function
     agent_fn = create_agent_fn(args.model)
@@ -501,7 +530,7 @@ def http_get(url: str) -> str:
         agent.skill_library.promote(seed_skill.id)
 
     # Select task set
-    tasks = get_quick_tasks(env) if args.quick else get_all_tasks(env)
+    tasks = _get_tasks(env, args.quick)
     print(f"[benchmark] Running {len(tasks)} episodes...")
     print()
 
@@ -519,8 +548,12 @@ def http_get(url: str) -> str:
     write_results(results, args, summary, args.output_dir)
 
     # Cleanup
-    print("[benchmark] Stopping metrics server...")
-    stop_metrics_server(server_thread)
+    print("[benchmark] Stopping server...")
+    if server_thread:
+        if args.domain == "datacorp":
+            stop_validation_server(server_thread)
+        else:
+            stop_metrics_server(server_thread)
     env.cleanup()
     print("[benchmark] Done.")
 
