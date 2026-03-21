@@ -32,10 +32,41 @@ def main():
     p_export.add_argument("path", help="Skill library path")
     p_export.add_argument("output", help="Output directory")
 
+    # dashboard
+    p_dash = sub.add_parser("dashboard", help="Interactive dashboard")
+    p_dash.add_argument("path", nargs="?", default="./arise_skills", help="Skill library path")
+    p_dash.add_argument("--trajectories-path", default="./arise_trajectories", help="Trajectory store path")
+    p_dash.add_argument("--web", action="store_true", help="Launch web UI instead of TUI")
+    p_dash.add_argument("--port", type=int, default=8501, help="Web UI port")
+
+    # registry
+    p_registry = sub.add_parser("registry", help="Registry operations (export, import, search)")
+    reg_sub = p_registry.add_subparsers(dest="registry_command")
+
+    p_reg_export = reg_sub.add_parser("export", help="Export active skills to JSON")
+    p_reg_export.add_argument("path", help="Skill library path")
+    p_reg_export.add_argument("-o", "--output", default="skills.json", help="Output JSON file")
+
+    p_reg_import = reg_sub.add_parser("import", help="Import skills from JSON")
+    p_reg_import.add_argument("input", help="Input JSON file")
+    p_reg_import.add_argument("path", help="Skill library path")
+
+    p_reg_search = reg_sub.add_parser("search", help="Search skills in a library")
+    p_reg_search.add_argument("query", help="Search query")
+    p_reg_search.add_argument("--tags", nargs="*", help="Filter by tags")
+
     # history
     p_history = sub.add_parser("history", help="Show trajectory history")
     p_history.add_argument("path", nargs="?", default="./arise_trajectories", help="Trajectory store path")
     p_history.add_argument("-n", type=int, default=10, help="Number of entries")
+
+    # setup-distributed
+    p_setup = sub.add_parser("setup-distributed", help="Provision AWS resources for distributed ARISE")
+    p_setup.add_argument("--region", default="us-west-2", help="AWS region")
+    p_setup.add_argument("--bucket", default=None, help="S3 bucket name (auto-generated if omitted)")
+    p_setup.add_argument("--queue", default=None, help="SQS queue name (auto-generated if omitted)")
+    p_setup.add_argument("--profile", default=None, help="AWS profile")
+    p_setup.add_argument("--destroy", action="store_true", help="Destroy resources from .arise.json")
 
     # evolve (dry-run)
     p_evolve = sub.add_parser("evolve", help="Trigger or preview evolution")
@@ -49,7 +80,15 @@ def main():
         parser.print_help()
         return
 
-    if args.command == "status":
+    if args.command == "dashboard":
+        if args.web:
+            from arise.dashboard.web import run_web
+            run_web(args.path, args.trajectories_path, port=args.port)
+        else:
+            from arise.dashboard.tui import run_tui
+            run_tui(args.path, args.trajectories_path)
+
+    elif args.command == "status":
         from arise.skills.library import SkillLibrary
         lib = SkillLibrary(args.path)
         stats = lib.stats()
@@ -115,6 +154,43 @@ def main():
             print(f"Exported: {filepath}")
         print(f"\n{len(skills)} skills exported.")
 
+    elif args.command == "setup-distributed":
+        from arise.distributed import setup_distributed, destroy_distributed
+        from arise.config import ARISEConfig
+
+        if args.destroy:
+            config_path = ".arise.json"
+            try:
+                with open(config_path) as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                print("No .arise.json found. Nothing to destroy.")
+                sys.exit(1)
+            config = ARISEConfig(
+                s3_bucket=data.get("s3_bucket"),
+                sqs_queue_url=data.get("sqs_queue_url"),
+                aws_region=data.get("aws_region", "us-east-1"),
+            )
+            destroy_distributed(config)
+            import os
+            os.remove(config_path)
+            print("Removed .arise.json")
+        else:
+            config = setup_distributed(
+                region=args.region,
+                bucket_name=args.bucket,
+                queue_name=args.queue,
+                profile=args.profile,
+            )
+            data = {
+                "s3_bucket": config.s3_bucket,
+                "sqs_queue_url": config.sqs_queue_url,
+                "aws_region": config.aws_region,
+            }
+            with open(".arise.json", "w") as f:
+                json.dump(data, f, indent=2)
+            print("Config saved to .arise.json")
+
     elif args.command == "evolve":
         from arise.skills.library import SkillLibrary
         from arise.skills.triggers import EvolutionTrigger
@@ -167,6 +243,34 @@ def main():
                     print("\n[DRY RUN] No capability gaps detected.")
         else:
             print("\nUse --dry-run to preview, or run evolve() from Python to execute.")
+
+    elif args.command == "registry":
+        from arise.skills.library import SkillLibrary
+        from arise.registry.client import export_skills, import_skills
+
+        if args.registry_command == "export":
+            lib = SkillLibrary(args.path)
+            count = export_skills(lib, args.output)
+            print(f"Exported {count} skills to {args.output}")
+
+        elif args.registry_command == "import":
+            lib = SkillLibrary(args.path)
+            imported = import_skills(args.input, lib)
+            print(f"Imported {len(imported)} skills into {args.path}")
+
+        elif args.registry_command == "search":
+            lib = SkillLibrary(args.path if hasattr(args, "path") else "./arise_skills")
+            results = lib.search(args.query)
+            if not results:
+                print("No matching skills found.")
+                return
+            print(f"{'Name':<25} {'Success':<10} {'Invocations':<12} {'ID'}")
+            print("-" * 60)
+            for s in results:
+                print(f"{s.name:<25} {s.success_rate:<10.1%} {s.invocation_count:<12} {s.id}")
+
+        else:
+            p_registry.print_help()
 
     elif args.command == "history":
         from arise.trajectory.store import TrajectoryStore
