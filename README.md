@@ -74,9 +74,10 @@ Episode 4  | OK    | reward=1.00 | skills=4   Agent now has the tools it needs
 | Framework | Status | How |
 |-----------|--------|-----|
 | **Any function** | Supported | `ARISE(agent_fn=my_func)` — any `(task, tools) -> str` callable |
-| **[Strands Agents](https://github.com/strands-agents/sdk-python)** | Supported | `ARISE(agent=strands_agent)` — auto-injects tools alongside your `@tool` functions |
+| **[Strands Agents](https://github.com/strands-agents/sdk-python)** | Supported | `ARISE(agent=strands_agent)` — auto-detected, tools injected alongside your `@tool` functions |
+| **[LangGraph](https://github.com/langchain-ai/langgraph)** | Supported | `ARISE(agent=compiled_graph)` — auto-detected, tools converted to LangGraph format |
+| **[CrewAI](https://github.com/crewAIInc/crewAI)** | Supported | `crewai_adapter(crew)` — tools injected into crew agents |
 | **Raw OpenAI / Anthropic** | Supported | Wrap API calls in an `agent_fn` — see [examples/](./examples/) |
-| **LangGraph, CrewAI** | Planned | v0.2 |
 
 ---
 
