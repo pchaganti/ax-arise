@@ -28,7 +28,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/abekek/arise"
+Documentation = "https://arise-ai.dev"
+Homepage = "https://arise-ai.dev"
 Repository = "https://github.com/abekek/arise"
 Issues = "https://github.com/abekek/arise/issues"
 
