@@ -46,3 +46,5 @@ htmlcov/
 *.log
 .worktrees
 .arise.json
+blog/
+paper/
