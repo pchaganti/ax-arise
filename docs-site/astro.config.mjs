@@ -32,7 +32,8 @@ export default defineConfig({
 						{ label: 'Distributed Mode', slug: 'guide/distributed' },
 						{ label: 'Skill Registry', slug: 'guide/registry' },
 						{ label: 'Dashboard', slug: 'guide/dashboard' },
-						{ label: 'Framework Adapters', slug: 'guide/adapters' },
+						{ label: 'Console (Web UI)', slug: 'guide/console' },
+					{ label: 'Framework Adapters', slug: 'guide/adapters' },
 					],
 				},
 				{

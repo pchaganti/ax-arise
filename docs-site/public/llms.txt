@@ -83,8 +83,13 @@ For stateless deployments (Lambda, ECS):
 - `create_distributed_arise()` factory function
 - `ARISEWorker` for the background process
 
+## Console (Web UI)
+
+`arise console` launches a web UI at http://localhost:8080 for creating agents, watching evolution live, and inspecting evolved code. Features: agent card grid, live terminal feed via WebSocket, skill inspector with syntax-highlighted code, editable config, All Skills and Evolution Log views.
+
 ## CLI
 
+- `arise console` — launch web UI
 - `arise status` — library summary
 - `arise skills` — list active skills
 - `arise inspect <id>` — view skill implementation
