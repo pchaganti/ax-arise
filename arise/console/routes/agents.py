@@ -44,15 +44,25 @@ def update_agent(agent_id: str, req: AgentUpdate):
 
 @router.post("/{agent_id}/run")
 def run_task(agent_id: str, req: RunTaskRequest):
+    from ..ws import get_runner
     arise = _registry.get_arise(agent_id)
     if arise is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     _registry.set_status(agent_id, "running")
     try:
-        result = arise.run(req.task)
+        runner = get_runner(agent_id)
+        result = runner.run_task(req.task)
+
+        # Get reward from latest trajectory
+        reward = 0.0
+        if hasattr(arise, 'trajectory_store') and arise.trajectory_store:
+            recent = arise.trajectory_store.get_recent(1)
+            if recent:
+                reward = recent[0].reward
+
         return RunTaskResponse(
             result=result,
-            reward=arise.last_evolution.cost_usd if arise.last_evolution else 0.0,
+            reward=reward,
             episode=arise.stats.get("episodes_run", 0),
             skills_count=len(arise.skills),
         )

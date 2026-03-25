@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from arise import ARISE, ARISEConfig
-from arise.rewards.builtin import task_success, code_execution_reward, answer_match_reward, efficiency_reward
+from arise.rewards.builtin import task_success, code_execution_reward, answer_match_reward, efficiency_reward, llm_judge_reward
 from arise.skills.library import SkillLibrary
 from arise.skills.sandbox import Sandbox
 from arise.trajectory.store import TrajectoryStore
@@ -17,6 +17,7 @@ REWARD_PRESETS = {
     "code_execution_reward": code_execution_reward,
     "answer_match_reward": answer_match_reward,
     "efficiency_reward": efficiency_reward,
+    "llm_judge_reward": llm_judge_reward,
 }
 
 
@@ -103,6 +104,9 @@ class AgentRegistry:
             return None
         for field, value in req.model_dump(exclude_none=True).items():
             agent[field] = value
+        # Reset ARISE instance so it gets recreated with new config
+        agent["arise"] = None
+        agent["status"] = "stopped"
         self._save()
         return self._detail(agent)
 
@@ -121,8 +125,21 @@ class AgentRegistry:
             self._agents[agent_id]["status"] = status
 
     def _create_arise(self, agent: dict) -> ARISE:
+        # Auto-prefix model names for Bedrock when AWS credentials are available
+        model_name = agent["model"]
+        if not model_name.startswith(("bedrock/", "openai/", "anthropic/")):
+            MODEL_MAP = {
+                "claude-sonnet-4-5": "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+                "claude-sonnet-4": "bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0",
+                "claude-haiku-4-5": "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0",
+            }
+            if model_name in MODEL_MAP:
+                model_name = MODEL_MAP[model_name]
+            elif (os.environ.get("AWS_PROFILE") or os.environ.get("AWS_ACCESS_KEY_ID")) and "claude" in model_name.lower():
+                model_name = f"bedrock/{model_name}"
+
         config = ARISEConfig(
-            model=agent["model"],
+            model=model_name,
             sandbox_backend=agent["sandbox_backend"],
             failure_threshold=agent["failure_threshold"],
             allowed_imports=agent["allowed_imports"],
@@ -139,8 +156,13 @@ class AgentRegistry:
                 os.environ.setdefault("OPENAI_API_KEY", agent["api_key"])
 
         reward_fn = REWARD_PRESETS.get(agent["reward_function"], task_success)
+        # llm_judge_reward needs the model parameter — wrap it with the agent's model
+        if agent["reward_function"] == "llm_judge_reward":
+            from functools import partial
+            reward_fn = partial(llm_judge_reward, model=model_name)
 
         # Create a simple agent_fn that uses litellm
+        _model = model_name  # capture the mapped model name
         def agent_fn(task: str, tools: list) -> str:
             import litellm, json as _json
             tool_map = {t.name: t.fn for t in tools}
@@ -153,7 +175,7 @@ class AgentRegistry:
 
             for _ in range(5):
                 resp = litellm.completion(
-                    model=agent["model"], messages=messages,
+                    model=_model, messages=messages,
                     tools=tool_defs if tool_defs else None,
                     system=system, max_tokens=4096,
                 )

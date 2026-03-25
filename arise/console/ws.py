@@ -20,9 +20,18 @@ def get_runner(agent_id: str) -> AgentRunner | None:
     arise = _registry.get_arise(agent_id)
     if arise is None:
         return None
-    runner = AgentRunner(arise, agent_id)
+    runner = AgentRunner(arise, agent_id, data_dir=_registry.data_dir)
     _runners[agent_id] = runner
     return runner
+
+
+@router.get("/api/agents/{agent_id}/events")
+def get_events(agent_id: str, limit: int = 100):
+    """Get persisted event history for an agent."""
+    runner = get_runner(agent_id)
+    if runner is None:
+        return []
+    return runner.get_history(limit)
 
 
 @router.websocket("/ws/agents/{agent_id}/live")
@@ -41,7 +50,6 @@ async def agent_live(websocket: WebSocket, agent_id: str):
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
                 await websocket.send_json(event)
             except asyncio.TimeoutError:
-                # Send heartbeat
                 await websocket.send_json({"type": "heartbeat"})
     except WebSocketDisconnect:
         pass

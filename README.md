@@ -52,6 +52,7 @@ Episode 4  | OK    | reward=1.00 | skills=4   Agent now has the tools it needs
 - **Skill registry** — share evolved tools across projects
 - **Version control + rollback** — SQLite checkpoints, `arise rollback <version>`
 - **A/B testing** — refined skills tested against originals before promotion
+- **Web Console** — create agents, watch evolution live, inspect evolved code (`arise console`)
 - **Dashboard** — terminal TUI and web UI for monitoring
 
 ## Benchmark Results
@@ -64,6 +65,21 @@ Episode 4  | OK    | reward=1.00 | skills=4   Agent now has the tools it needs
 | GPT-4o-mini | No tools | 48% | 50% |
 
 ARISE improves task success by **+9–42 percentage points** across models and domains. See the [full benchmark results](https://arise-ai.dev/benchmarks/).
+
+## ARISE Console
+
+A web UI for creating agents, watching evolution live, and inspecting evolved tools:
+
+```bash
+arise console
+# Opens http://localhost:8080
+```
+
+- **Create agents** — pick model, set system prompt, choose reward function
+- **Live terminal feed** — watch episodes and evolution in real-time via WebSocket
+- **Skill inspector** — syntax-highlighted code, test suite, performance metrics
+- **Editable config** — change reward function, system prompt, failure threshold on the fly
+- **All Skills / Evolution Log** — global views across all agents
 
 ## Documentation
 

@@ -18,10 +18,14 @@ class AgentCreate(BaseModel):
 
 
 class AgentUpdate(BaseModel):
+    name: str | None = None
+    model: str | None = None
     system_prompt: str | None = None
     tasks: list[str] | None = None
+    reward_function: str | None = None
     failure_threshold: int | None = None
     allowed_imports: list[str] | None = None
+    sandbox_backend: str | None = None
 
 
 class AgentSummary(BaseModel):

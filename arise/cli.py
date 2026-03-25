@@ -74,13 +74,23 @@ def main():
     p_evolve.add_argument("--trajectories-path", default="./arise_trajectories", help="Trajectory store path")
     p_evolve.add_argument("--dry-run", action="store_true", help="Show what would be created without calling LLM")
 
+    # console
+    p_console = sub.add_parser("console", help="Launch ARISE Console (web UI)")
+    p_console.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
+    p_console.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
+    p_console.add_argument("--data-dir", default="~/.arise/console", help="Data directory")
+
     args = parser.parse_args()
 
     if args.command is None:
         parser.print_help()
         return
 
-    if args.command == "dashboard":
+    if args.command == "console":
+        from arise.console.server import run_console
+        run_console(data_dir=args.data_dir, port=args.port, host=args.host)
+
+    elif args.command == "dashboard":
         if args.web:
             from arise.dashboard.web import run_web
             run_web(args.path, args.trajectories_path, port=args.port)

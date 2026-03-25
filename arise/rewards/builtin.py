@@ -80,6 +80,13 @@ Return ONLY a number between 0.0 and 1.0.
 """
     try:
         result = llm_call([{"role": "user", "content": prompt}], model=model)
-        return max(0.0, min(1.0, float(result.strip())))
-    except Exception:
+        # Extract the first float from the response
+        import re
+        match = re.search(r'(\d+\.?\d*)', result.strip())
+        if match:
+            return max(0.0, min(1.0, float(match.group(1))))
+        return 0.5
+    except Exception as e:
+        import logging
+        logging.getLogger("arise").warning(f"llm_judge_reward failed: {e}")
         return 0.5
